@@ -12,6 +12,7 @@ kfp = "2.8.0"
 numpy = "1.26.4"
 pandas = "2.2.2"
 apache-beam = "2.57.0"
+docker = "7.1.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "24.4.2"
