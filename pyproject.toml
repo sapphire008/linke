@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "kubeflow-components"
+version = "0.1.0"
+description = ""
+authors = ["sapphire008 <cui23327@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">= 3.11, < 3.13"
+kfp = "2.8.0"
+numpy = "1.26.4"
+pandas = "2.2.2"
+apache-beam = "2.57.0"
+
+[tool.poetry.group.dev.dependencies]
+black = "24.4.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
