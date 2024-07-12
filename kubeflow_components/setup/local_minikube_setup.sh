@@ -122,5 +122,4 @@ else
     setup_port_forwarding
 fi
 
-# Keep the script running to maintain port forwarding
-wait
+# Use lsof -i :8080 to figure out which pid to kill to stop port forwarding
