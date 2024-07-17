@@ -35,7 +35,7 @@ def beam_data_processing_component(
         if output_data_obj.file is not None:
             # Reusing the filename
             output_data_obj.file = os.path.join(
-                output_artifact.path, os.path.basename(output_data.file)
+                output_artifact.path, os.path.basename(output_data_obj.file)
             )
         else:
             output_data_obj.file = os.path.join(

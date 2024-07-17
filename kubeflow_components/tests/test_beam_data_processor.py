@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import shutil
 from typing import NamedTuple, List
 import pytest
 import pandas as pd
@@ -106,7 +107,7 @@ def test_beam_data_processing_single_component():
     # Initialize the runner
     runner = LocalPipelineRunner(runner="subprocess")
     with tempfile.TemporaryDirectory() as temp_dir:
-        output_file = os.path.join(temp_dir, "output")
+        # output_file = os.path.join(temp_dir, "output")
         # make payload
         payload = {
             "processing_fn": "kubeflow_components.tests.conftest.processing_fn",
@@ -121,8 +122,9 @@ def test_beam_data_processing_single_component():
             ).as_dict(),
         }
         # Run the pipeline
-        task = runner.run(beam_data_processing_component, payload)
+        task = runner.create_run(beam_data_processing_component, payload)
 
         # Check that there are 3 files
-        # files = os.listdir(temp_dir)
-        # assert len(files) == 3, "Expected 3 files"
+        files = os.listdir(task.output.uri)
+        assert len(files) == 3, "Expected 3 files"
+        shutil.rmtree(task.output.uri) # clean up
