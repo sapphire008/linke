@@ -14,6 +14,7 @@ def beam_data_processing_component(
     # input_artifact: Optional[Input[Artifact]] = None,
     output_artifact: Output[Artifact],
     beam_pipeline_args: List[str] = ["--runner=DirectRunner"],
+    use_output_artifact: bool = True,
 ):
     """Beam data processing Kubeflow component."""
     # Importing all the helper functions
@@ -30,7 +31,7 @@ def beam_data_processing_component(
     output_data_obj = output_dataclass.from_dict(output_data)
 
     # Setting outputdata to use output artifact path
-    if output_dataclass.has_field("file"):
+    if output_dataclass.has_field("file") and use_output_artifact:
         if output_data_obj.file is not None:
             # Reusing the filename
             output_data_obj.file = os.path.join(
@@ -40,6 +41,8 @@ def beam_data_processing_component(
             output_data_obj.file = os.path.join(
                 output_artifact.path, "output"
             )
+    elif output_dataclass.has_field("file") and not use_output_artifact:
+        assert output_data_obj.file is not None, "Need to specify the output file name when not use_output_artifact = False"
 
     # Call the data processor
     beam_data_processing_fn(
