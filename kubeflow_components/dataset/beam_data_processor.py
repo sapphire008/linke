@@ -7,17 +7,19 @@ Reader and Writer are a set of supported components by Apache Beam
 """
 
 import sys
-from dataclasses import dataclass, field
+import inspect
+from functools import wraps
+from dataclasses import dataclass, asdict, fields
 from typing import (
     Literal,
-    NamedTuple,
     List,
     Dict,
     Any,
     Union,
     Generator,
     Callable,
-    Type,
+    Optional,
+    get_type_hints,
 )
 import keyword
 import importlib
@@ -31,7 +33,9 @@ from apache_beam.io.gcp.bigquery import (
     WriteToBigQuery,
     BigQueryDisposition,
 )
+import kfp
 from kfp import dsl
+from kfp.dsl import Input, Output, Artifact
 
 from pdb import set_trace
 
@@ -112,30 +116,80 @@ class DataProcessingDoFn(beam.DoFn):
 
 
 # %%
-@dataclass(kw_only=True)
-class BaseInputData:
+@dataclass
+class BaseData:
+    def as_dict(self) -> dict:
+        # replace None with string "None"
+        out = {k: "None" if v is None else v for k, v in asdict(self).items()}
+        out["__class__"] = str(self.__class__)
+        return out
+    
+    @classmethod
+    def from_dict(cls, attrs: dict):
+        instance = cls()
+        if "__class__" in attrs:
+            attrs.pop("__class__")
+        
+        type_hints = get_type_hints(cls)
+        
+        for field in fields(cls):
+            k = field.name
+            if k in attrs:
+                v = attrs[k]
+                if v == "None":
+                    setattr(instance, k, None)
+                else:
+                    field_type = type_hints.get(k, Any)
+                    try:
+                        # Handle special cases like List, Dict, etc.
+                        if hasattr(field_type, '__origin__'):
+                            if field_type.__origin__ is list:
+                                v = [field_type.__args__[0](item) for item in v]
+                            elif field_type.__origin__ is dict:
+                                key_type, val_type = field_type.__args__
+                                v = {key_type(key): val_type(value) for key, value in v.items()}
+                        else:
+                            v = field_type(v)
+                    except ValueError:
+                        # If conversion fails, keep the original value
+                        pass
+                setattr(instance, k, v)
+        return instance
+        
+            
+    @staticmethod
+    def get_class(class_path: str):
+        class_path = class_path.split("'")[1]
+        module_path, class_name = class_path.rsplit('.', 1)
+        # Import the module
+        module = importlib.import_module(module_path)
+        # Get the class from the module
+        DataClass = getattr(module, class_name)
+        return DataClass
+
+@dataclass
+class BaseInputData(BaseData):
     batch_size: int = None
     format: Literal["dict", "dataframe"] = "dict"
+    
 
-
-@dataclass(kw_only=True)
-class BaseOutputData:
+@dataclass
+class BaseOutputData(BaseData):
     pass
 
-
 # %% CSV Reader and Writers
-@dataclass(kw_only=True)
+@dataclass
 class CsvInputData(BaseInputData):
-    file: str
+    file: str = None
     columns: List[str] = None  # list of columns to read
 
 
-@dataclass(kw_only=True)
+@dataclass
 class CsvOutputData(BaseOutputData):
-    file: str
+    file: str = None
     num_shards: int = 1  # csv shards
     headers: List[str] = None  # list of output headers
-    compression_type: CompressionTypes = CompressionTypes.UNCOMPRESSED
+    compression_type: str = CompressionTypes.UNCOMPRESSED
 
 
 class ReadCsvData(beam.PTransform):
@@ -253,13 +307,13 @@ class WriteCsvData(beam.PTransform):
 
 
 # %% BigQuery
-@dataclass(kw_only=True)
+@dataclass
 class BigQueryInputData(BaseInputData):
-    sql: str  # Input sql string
-    temp_dataset: str  # project_id.temp_dataset
+    sql: str = None  # Input sql string
+    temp_dataset: str = None  # project_id.temp_dataset
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, slots=True)
 class BigQuerySchemaField:
     name: str
     type: Literal[
@@ -281,32 +335,40 @@ class BigQuerySchemaField:
     ]
     mode: Literal["NULLABLE", "REQUIRED", "REPEATED"]
     description: str = ""
-    
+
     def as_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
             "type": self.type,
             "mode": self.mode,
-            "description": self.description
+            "description": self.description,
         }
 
 
-@dataclass(kw_only=True)
+@dataclass
 class BigQueryOutputData(BaseOutputData):
-    output_table: str  # project_id.dataset.table
+    output_table: str = None  # project_id.dataset.table
     mode: BigQueryDisposition = (
         BigQueryDisposition.WRITE_APPEND
     )  # BigQuery write mode
     schema: Union[List[BigQuerySchemaField], List[Dict]] = None
-    
+
     def __post_init__(self):
-        if self.schema and isinstance(self.schema[0], BigQuerySchemaField):
+        if self.schema and isinstance(
+            self.schema[0], BigQuerySchemaField
+        ):
             self.schema = {"fields": [s.as_dict() for s in self.schema]}
         elif self.schema and isinstance(self.schema[0], dict):
             # Validating
-            assert "name" in self.schema[0], "'name' must be present in BigQuery Schema"
-            assert "type" in self.schema[0], "'type' must be present in BigQuery Schema"
-            assert "mode" in self.schema[0], "'mode' must be present in BigQuery Schema"
+            assert (
+                "name" in self.schema[0]
+            ), "'name' must be present in BigQuery Schema"
+            assert (
+                "type" in self.schema[0]
+            ), "'type' must be present in BigQuery Schema"
+            assert (
+                "mode" in self.schema[0]
+            ), "'mode' must be present in BigQuery Schema"
             self.schema = {"fields": self.schema}
 
 
@@ -389,8 +451,13 @@ class WriteBigQueryData(beam.PTransform):
         )
 
 
-# %% Create the kubeflow component
-def beam_data_processing_component(
+# %% TFRecords
+
+# %% Parquet
+
+
+# %% Create the processing function
+def beam_data_processing_fn(
     input_data: BaseInputData,
     output_data: BaseOutputData,
     processing_fn: str,
@@ -406,12 +473,12 @@ def beam_data_processing_component(
             pcoll = p | "Read CSV" >> ReadCsvData(
                 input_data.file,
                 format=input_data.format,
-                min_batch_size=input_data.batch_size,
+                min_batch_size=int(input_data.batch_size),
             )
         elif isinstance(input_data, BigQueryInputData):
             pcoll = p | "Read BigQuery" >> ReadBigQueryData(
                 format=input_data.format,
-                min_batch_size=input_data.batch_size,
+                min_batch_size=int(input_data.batch_size),
                 temp_dataset=input_data.temp_dataset,
             )
 
@@ -427,7 +494,7 @@ def beam_data_processing_component(
         if isinstance(output_data, CsvOutputData):
             pcoll = pcoll | "Write CSV" >> WriteCsvData(
                 output_data.file,
-                num_shards=output_data.num_shards,
+                num_shards=int(output_data.num_shards),
                 headers=output_data.headers,
             )
         elif isinstance(output_data, BigQueryOutputData):
@@ -436,3 +503,20 @@ def beam_data_processing_component(
                 schema=output_data.schema,
                 write_disposition=output_data.mode,
             )
+
+
+# %% Create the beam data processing component
+
+
+
+
+
+# if __name__ == '__main__':
+#     import kfp
+#     kfp.components.create_component_from_func(
+#         beam_data_processing_component,
+#         output_component_file='beam_component.yaml',
+#         base_image='python:3.9',
+
+#         # packages_to_install=['apache-beam', 'your-custom-package']
+#     )
