@@ -6,10 +6,6 @@ Reader -> Custom processor class -> Writer
 Reader and Writer are a set of supported components by Apache Beam
 """
 
-import sys
-import inspect
-from functools import wraps
-from dataclasses import dataclass, asdict, fields
 from typing import (
     Literal,
     List,
@@ -18,9 +14,9 @@ from typing import (
     Union,
     Generator,
     Callable,
-    Optional,
     get_type_hints,
 )
+from dataclasses import dataclass, asdict, fields
 import keyword
 import importlib
 import pandas as pd
@@ -33,9 +29,6 @@ from apache_beam.io.gcp.bigquery import (
     WriteToBigQuery,
     BigQueryDisposition,
 )
-import kfp
-from kfp import dsl
-from kfp.dsl import Input, Output, Artifact
 
 from pdb import set_trace
 
@@ -153,7 +146,7 @@ class BaseData:
                     except ValueError:
                         # If conversion fails, keep the original value
                         pass
-                setattr(instance, k, v)
+                    setattr(instance, k, v)
         return instance
         
             
@@ -166,6 +159,10 @@ class BaseData:
         # Get the class from the module
         DataClass = getattr(module, class_name)
         return DataClass
+    
+    @classmethod
+    def has_field(cls, field_name):
+        return field_name in cls.__annotations__
 
 @dataclass
 class BaseInputData(BaseData):
@@ -504,19 +501,3 @@ def beam_data_processing_fn(
                 write_disposition=output_data.mode,
             )
 
-
-# %% Create the beam data processing component
-
-
-
-
-
-# if __name__ == '__main__':
-#     import kfp
-#     kfp.components.create_component_from_func(
-#         beam_data_processing_component,
-#         output_component_file='beam_component.yaml',
-#         base_image='python:3.9',
-
-#         # packages_to_install=['apache-beam', 'your-custom-package']
-#     )
