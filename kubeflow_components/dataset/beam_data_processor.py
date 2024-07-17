@@ -13,6 +13,7 @@ from typing import (
     NamedTuple,
     List,
     Dict,
+    Any,
     Union,
     Generator,
     Callable,
@@ -115,7 +116,6 @@ class DataProcessingDoFn(beam.DoFn):
 class BaseInputData:
     batch_size: int = field(default=None)
     format: Literal["dict", "dataframe"] = field(default="dict")
-
 
 
 @dataclass(kw_only=True)
@@ -253,32 +253,61 @@ class WriteCsvData(beam.PTransform):
 
 
 # %% BigQuery
-@dataclass
+@dataclass(kw_only=True)
 class BigQueryInputData(BaseInputData):
     sql: str  # Input sql string
     temp_dataset: str  # project_id.temp_dataset
 
 
-@dataclass
+@dataclass(kw_only=True)
+class BigQuerySchemaField:
+    name: str
+    type: Literal[
+        "STRING",
+        "TIMESTAMP",
+        "INT64",
+        "FLOAT64",
+        "STRUCT",
+        "JSON",
+        "BOOL",
+        "BYTES",
+        "NUMERIC",
+        "INTERVAL",
+        "DATE",
+        "DATETIME",
+        "TIME",
+        "ARRAY",
+        "GEOGRAPHY",
+    ]
+    mode: Literal["NULLABLE", "REQUIRED", "REPEATED"]
+    description: str = ""
+    
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "type": self.type,
+            "mode": self.mode,
+            "description": self.description
+        }
+
+
+@dataclass(kw_only=True)
 class BigQueryOutputData(BaseOutputData):
     output_table: str  # project_id.dataset.table
     mode: BigQueryDisposition = (
         BigQueryDisposition.WRITE_APPEND
     )  # BigQuery write mode
-    _schema: Type[NamedTuple] = None
-
-    @staticmethod
-    def namedtuple_to_bq_schema(schema):
-        schema = NamedTuple(
-            "OutputRow",
-            [
-                ("A", int),
-                ("B", int),
-                ("C", int),
-                ("D", int),
-                ("E", int),
-            ],
-        )
+    schema: Union[List[BigQuerySchemaField], List[Dict]] = None
+    
+    def __post_init__(self):
+        if self.schema and isinstance(self.schema[0], BigQuerySchemaField):
+            self.schema = {"fields": [s.as_dict() for s in self.schema]}
+        elif self.schema and isinstance(self.schema[0], dict):
+            # Validating
+            assert "name" in self.schema[0], "'name' must be present in BigQuery Schema"
+            assert "type" in self.schema[0], "'type' must be present in BigQuery Schema"
+            assert "mode" in self.schema[0], "'mode' must be present in BigQuery Schema"
+            self.schema = {"fields": self.schema}
 
 
 class ReadBigQueryData(beam.PTransform):
