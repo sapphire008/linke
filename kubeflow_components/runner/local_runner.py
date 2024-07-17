@@ -23,7 +23,7 @@ class LocalPipelineRunner:
             raise_on_error=True,
         )
 
-    def run(
+    def create_run(
         self,
         pipeline: dsl.graph_component.GraphComponent,
         payload: dict = None,
