@@ -114,8 +114,8 @@ class DataProcessingDoFn(beam.DoFn):
 # %%
 @dataclass(kw_only=True)
 class BaseInputData:
-    batch_size: int = field(default=None)
-    format: Literal["dict", "dataframe"] = field(default="dict")
+    batch_size: int = None
+    format: Literal["dict", "dataframe"] = "dict"
 
 
 @dataclass(kw_only=True)
@@ -415,7 +415,7 @@ def beam_data_processing_component(
                 temp_dataset=input_data.temp_dataset,
             )
 
-        # Run the
+        # Run the processing function
         pcoll = pcoll | "Process Data" >> beam.ParDo(
             DataProcessingDoFn(
                 processing_fn=processing_fn,
@@ -425,13 +425,13 @@ def beam_data_processing_component(
 
         # Output
         if isinstance(output_data, CsvOutputData):
-            pcoll = pcoll | "Write CSV Data" >> WriteCsvData(
+            pcoll = pcoll | "Write CSV" >> WriteCsvData(
                 output_data.file,
                 num_shards=output_data.num_shards,
                 headers=output_data.headers,
             )
         elif isinstance(output_data, BigQueryOutputData):
-            pcoll = pcoll | "Write BigQuery Data" >> WriteBigQueryData(
+            pcoll = pcoll | "Write BigQuery" >> WriteBigQueryData(
                 output_table=output_data.output_table,
                 schema=output_data.schema,
                 write_disposition=output_data.mode,
