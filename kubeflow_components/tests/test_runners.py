@@ -88,7 +88,7 @@ def test_kubeflow_run():
     )
 
 # %% GCP Vertex runner
-@pytest.mark.skip(reason="Requires remote job submission, skip")
+# @pytest.mark.skip(reason="Requires remote job submission, skip")
 def test_vertex_run():
     runner = VertexPipelineRunner(
         gcp_project_id="nfa-core-prod", run_region="us-east1"
@@ -97,5 +97,7 @@ def test_vertex_run():
         hello_pipeline,
         pipeline_name="test-vertex-pipeline-run",
         pipeline_parameters={"recipient": "Vertex"},
-        pipeline_root="gs://ml-pipeline-runs"
+        pipeline_root="gs://ml-pipeline-runs",
+        pipeline_path="./",
+        # image_uri="gcr.io/ml-pipelines/test-ml-pipeline"
     )
