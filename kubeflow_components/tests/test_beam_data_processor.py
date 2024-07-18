@@ -102,7 +102,7 @@ def test_bigquery_output_data():
     )
 
 
-# @pytest.mark.skip(reason="No longer have access to the test tables. Need to reconfigure in the future.")
+@pytest.mark.skip(reason="No longer have access to the test tables. Need to reconfigure in the future.")
 def test_bigquery_reader_writer():
     query = """
     SELECT * EXCEPT(row_id) 
@@ -126,7 +126,7 @@ def test_bigquery_reader_writer():
     ]
 
     beam_data_processing_fn(
-        input_data=BigQueryInputData(sql=query),
+        input_data=BigQueryInputData(sql=query, batch_size=3),
         output_data=BigQueryOutputData(
             output_table="nfa-core-prod.temp_dataset.test_beam_writer",
             schema=schema,
@@ -139,8 +139,6 @@ def test_bigquery_reader_writer():
             "--project=nfa-core-prod",
         ],
     )
-    # Check results
-    df = []
 
 
 @pytest.mark.skip(

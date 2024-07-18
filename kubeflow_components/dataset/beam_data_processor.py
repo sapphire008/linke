@@ -103,7 +103,6 @@ class DataProcessingDoFn(beam.DoFn):
     ) -> Generator[
         Union[pd.DataFrame, pd.Series, List[Dict], Dict], None, None
     ]:
-        print("Calling processing func")
         # Call the processing function
         outputs = self.processing_fn(element, config=self.config)
 
@@ -446,11 +445,13 @@ class WriteBigQueryData(beam.PTransform):
         output_table: str,
         schema: Dict,
         write_disposition: BigQueryDisposition = BigQueryDisposition.WRITE_APPEND,
+        is_batched: bool = False,
         **kwargs,
     ):
         self.table = self.normalize_table_reference(output_table)
         self.schema = schema  # bigquery specific schema
         self.write_disposition = write_disposition
+        self.is_batched = is_batched
         self.kwargs = kwargs
 
     @staticmethod
@@ -464,6 +465,9 @@ class WriteBigQueryData(beam.PTransform):
         return f"{parts[0]}:{parts[1]}.{parts[2]}"
 
     def expand(self, pcoll):
+        if self.is_batched: # unbatching
+            pcoll = pcoll | "Unbatching" >> beam.FlatMap(lambda x: x)
+        
         return pcoll | "Write to BigQuery" >> WriteToBigQuery(
             table=self.table,
             schema=self.schema,
@@ -539,8 +543,8 @@ def beam_data_processing_fn(
                 min_batch_size=batch_size,
                 temp_dataset=input_data.temp_dataset,
             )
-
-        # Run the processing function
+            
+        # # Run the processing function
         pcoll = pcoll | "Process Data" >> beam.ParDo(
             DataProcessingDoFn(
                 processing_fn=processing_fn,
@@ -572,4 +576,5 @@ def beam_data_processing_fn(
                 schema=output_data.schema,
                 write_disposition=output_data.mode,
                 method=output_data.write_method,
+                is_batched=batch_size is not None,
             )
