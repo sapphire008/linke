@@ -6,6 +6,7 @@ Reader -> Custom processor class -> Writer
 Reader and Writer are a set of supported components by Apache Beam
 """
 
+import os
 from typing import (
     Literal,
     List,
@@ -54,7 +55,7 @@ class DataProcessingDoFn(beam.DoFn):
         processing_fn: Union[
             str, Callable[[List[Dict], Dict], List[Dict]]
         ],
-        init_fn: Union[str, Callable[[], Dict]],
+        init_fn: Union[str, Callable[[], Dict]] = None,
         config: Dict = {},
     ):
         self._shared_handle = beam.utils.shared.Shared()
@@ -92,16 +93,17 @@ class DataProcessingDoFn(beam.DoFn):
             return WeakRef(**result)
 
         # Create reference objects
-        self.config["weak_ref"] = self._shared_handle.acquire(
-            _initialize
-        )
+        if self.init_fn:  # run initi_fn if it is available
+            self.config["weak_ref"] = self._shared_handle.acquire(
+                _initialize
+            )
 
     def process(
         self, element
     ) -> Generator[
         Union[pd.DataFrame, pd.Series, List[Dict], Dict], None, None
     ]:
-
+        print("Calling processing func")
         # Call the processing function
         outputs = self.processing_fn(element, config=self.config)
 
@@ -113,18 +115,21 @@ class DataProcessingDoFn(beam.DoFn):
 class BaseData:
     def as_dict(self) -> dict:
         # replace None with string "None"
-        out = {k: "None" if v is None else v for k, v in asdict(self).items()}
+        out = {
+            k: "None" if v is None else v
+            for k, v in asdict(self).items()
+        }
         out["__class__"] = str(self.__class__)
         return out
-    
+
     @classmethod
     def from_dict(cls, attrs: dict):
         instance = cls()
         if "__class__" in attrs:
             attrs.pop("__class__")
-        
+
         type_hints = get_type_hints(cls)
-        
+
         for field in fields(cls):
             k = field.name
             if k in attrs:
@@ -135,12 +140,18 @@ class BaseData:
                     field_type = type_hints.get(k, Any)
                     try:
                         # Handle special cases like List, Dict, etc.
-                        if hasattr(field_type, '__origin__'):
+                        if hasattr(field_type, "__origin__"):
                             if field_type.__origin__ is list:
-                                v = [field_type.__args__[0](item) for item in v]
+                                v = [
+                                    field_type.__args__[0](item)
+                                    for item in v
+                                ]
                             elif field_type.__origin__ is dict:
                                 key_type, val_type = field_type.__args__
-                                v = {key_type(key): val_type(value) for key, value in v.items()}
+                                v = {
+                                    key_type(key): val_type(value)
+                                    for key, value in v.items()
+                                }
                         else:
                             v = field_type(v)
                     except ValueError:
@@ -148,31 +159,32 @@ class BaseData:
                         pass
                     setattr(instance, k, v)
         return instance
-        
-            
+
     @staticmethod
     def get_class(class_path: str):
         class_path = class_path.split("'")[1]
-        module_path, class_name = class_path.rsplit('.', 1)
+        module_path, class_name = class_path.rsplit(".", 1)
         # Import the module
         module = importlib.import_module(module_path)
         # Get the class from the module
         DataClass = getattr(module, class_name)
         return DataClass
-    
+
     @classmethod
     def has_field(cls, field_name):
         return field_name in cls.__annotations__
+
 
 @dataclass
 class BaseInputData(BaseData):
     batch_size: int = None
     format: Literal["dict", "dataframe"] = "dict"
-    
+
 
 @dataclass
 class BaseOutputData(BaseData):
     pass
+
 
 # %% CSV Reader and Writers
 @dataclass
@@ -307,6 +319,9 @@ class WriteCsvData(beam.PTransform):
 @dataclass
 class BigQueryInputData(BaseInputData):
     sql: str = None  # Input sql string
+    gcp_project_id: str = (
+        None,
+    )  # GCP project to run the sql query from
     temp_dataset: str = None  # project_id.temp_dataset
 
 
@@ -349,6 +364,12 @@ class BigQueryOutputData(BaseOutputData):
         BigQueryDisposition.WRITE_APPEND
     )  # BigQuery write mode
     schema: Union[List[BigQuerySchemaField], List[Dict]] = None
+    write_method: Literal[
+        "FILE_LOADS",
+        "STORAGE_WRITE_API",
+        "STREAMING_INSERTS",
+        "DEFAULT",
+    ] = "DEFAULT"
 
     def __post_init__(self):
         if self.schema and isinstance(
@@ -373,6 +394,7 @@ class ReadBigQueryData(beam.PTransform):
     def __init__(
         self,
         query: str,
+        gcp_project_id: str,
         format: Literal["dataframe", "dict"] = "dict",
         min_batch_size: int = None,
         max_batch_size: int = 1024,
@@ -381,6 +403,7 @@ class ReadBigQueryData(beam.PTransform):
     ):
         super().__init__()
         self.query = query
+        self.gcp_project_id = gcp_project_id
         self.format = format
         self.min_batch_size = min_batch_size
         self.max_batch_size = max_batch_size
@@ -399,6 +422,7 @@ class ReadBigQueryData(beam.PTransform):
         pcoll = pcoll | "Read BigQuery" >> ReadFromBigQuery(
             query=self.query,
             use_standard_sql=self.use_standard_sql,
+            project=self.gcp_project_id,
             **self.kwargs,
         )
         # Batching when needed
@@ -453,16 +477,42 @@ class WriteBigQueryData(beam.PTransform):
 # %% Parquet
 
 
+
 # %% Create the processing function
+def _check_gcs_project_id(input_data_gcp_project_id: str, beam_pipeline_args: List[str]):
+    if input_data_gcp_project_id:
+        return input_data_gcp_project_id
+
+    # Check beam pipeline args
+    for arg in beam_pipeline_args:
+        if arg.startswith("--projects="):
+            return arg.split("=")[1]
+    
+    # Check environment
+    gcp_project_id = os.environ.get("GCP_PROEJCT_ID")
+    assert (
+        gcp_project_id is not None and gcp_project_id != ""
+    ), (
+        "GCP Project ID is needed to determine which environment "
+        "the SQL query is running in"
+    )
+    return gcp_project_id
+
+
 def beam_data_processing_fn(
     input_data: BaseInputData,
     output_data: BaseOutputData,
     processing_fn: str,
-    init_fn: str,
+    init_fn: str = None,
     beam_pipeline_args: List[str] = ["--runner=DirectRunner"],
 ) -> None:
     options = PipelineOptions(flags=beam_pipeline_args)
 
+    batch_size = (
+        int(input_data.batch_size)
+        if input_data.batch_size is not None
+        else None
+    )
     # Create beam pipeline
     with beam.Pipeline(options=options) as p:
         # inputs
@@ -470,12 +520,23 @@ def beam_data_processing_fn(
             pcoll = p | "Read CSV" >> ReadCsvData(
                 input_data.file,
                 format=input_data.format,
-                min_batch_size=int(input_data.batch_size),
+                min_batch_size=batch_size,
             )
         elif isinstance(input_data, BigQueryInputData):
+            # Check if --temp_location exists
+            assert any(
+                [
+                    a.startswith("--temp_location=")
+                    for a in beam_pipeline_args
+                ]
+            ), "Need to specify --temp_location argument when reading from BigQuery"
+            # Check if gcp_project_id exists
+            gcp_project_id = _check_gcs_project_id(input_data.gcp_project_id, beam_pipeline_args)
             pcoll = p | "Read BigQuery" >> ReadBigQueryData(
+                query=input_data.sql,
+                gcp_project_id=gcp_project_id,
                 format=input_data.format,
-                min_batch_size=int(input_data.batch_size),
+                min_batch_size=batch_size,
                 temp_dataset=input_data.temp_dataset,
             )
 
@@ -489,15 +550,26 @@ def beam_data_processing_fn(
 
         # Output
         if isinstance(output_data, CsvOutputData):
+            num_shards = (
+                int(output_data.num_shards)
+                if output_data.num_shards is not None
+                else None
+            )
             pcoll = pcoll | "Write CSV" >> WriteCsvData(
                 output_data.file,
-                num_shards=int(output_data.num_shards),
+                num_shards=num_shards,
                 headers=output_data.headers,
             )
         elif isinstance(output_data, BigQueryOutputData):
+            assert any(
+                [
+                    a.startswith("--temp_location=")
+                    for a in beam_pipeline_args
+                ]
+            ), "Need to specify --temp_location argument when writing to BigQuery"
             pcoll = pcoll | "Write BigQuery" >> WriteBigQueryData(
                 output_table=output_data.output_table,
                 schema=output_data.schema,
                 write_disposition=output_data.mode,
+                method=output_data.write_method,
             )
-
