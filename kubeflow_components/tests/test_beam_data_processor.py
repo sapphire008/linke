@@ -7,7 +7,7 @@ from typing import NamedTuple, List
 import pytest
 import pandas as pd
 from ..runner.local_runner import LocalPipelineRunner
-from ..dataset.beam_data_processor import (
+from ..dataset.beam_data_processor.beam_data_processor import (
     beam_data_processing_fn,
     CsvInputData,
     CsvOutputData,
@@ -15,7 +15,7 @@ from ..dataset.beam_data_processor import (
     BigQuerySchemaField,
     BigQueryOutputData,
 )
-from ..dataset.beam_data_processor_component import (
+from ..dataset.beam_data_processor.component import (
     beam_data_processing_component,
 )
 
@@ -175,3 +175,5 @@ def test_bigquery_reader_writer():
     )
 
 
+def test_tfrecord_reader_writer():
+    pass

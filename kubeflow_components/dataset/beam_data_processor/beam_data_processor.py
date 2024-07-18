@@ -24,12 +24,14 @@ import pandas as pd
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.io.filesystem import CompressionTypes
-from apache_beam.io.textio import ReadFromCsv, WriteToText
+from apache_beam.io.textio import ReadFromCsv, ReadFromText, WriteToText
 from apache_beam.io.gcp.bigquery import (
     ReadFromBigQuery,
     WriteToBigQuery,
     BigQueryDisposition,
 )
+from apache_beam.io.tfrecordio import ReadFromTFRecord, WriteToTFRecord
+from tensorflow_metadata.proto.v0 import schema_pb2
 
 from pdb import set_trace
 
@@ -432,11 +434,11 @@ class ReadBigQueryData(beam.PTransform):
             )
         # Default outputs dictionary
         if self.format == "dataframe":
-            return pcoll | "Convert Format" >> beam.Map(
+            pcoll = pcoll | "Convert Format" >> beam.Map(
                 self._convert_to_df
             )
-        else:
-            return pcoll
+
+        return pcoll
 
 
 class WriteBigQueryData(beam.PTransform):
@@ -465,9 +467,9 @@ class WriteBigQueryData(beam.PTransform):
         return f"{parts[0]}:{parts[1]}.{parts[2]}"
 
     def expand(self, pcoll):
-        if self.is_batched: # unbatching
+        if self.is_batched:  # unbatching
             pcoll = pcoll | "Unbatching" >> beam.FlatMap(lambda x: x)
-        
+
         return pcoll | "Write to BigQuery" >> WriteToBigQuery(
             table=self.table,
             schema=self.schema,
@@ -478,12 +480,130 @@ class WriteBigQueryData(beam.PTransform):
 
 # %% TFRecords
 
+
+@dataclass(frozen=True, slots=True)
+class TFRecordSchema:
+    name: str
+
+
+@dataclass
+class TFRecordInputData(BaseInputData):
+    file: str = None
+    schema: TFRecordSchema = None
+    compression_type: str = CompressionTypes.GZIP
+
+
+@dataclass
+class TFRecordOutputData(BaseOutputData):
+    file: str = None
+    schema: TFRecordSchema = None
+    compression_type: str = CompressionTypes.GZIP
+
+
+class ReadTFRecordData(beam.PTransform):
+    def __init__(
+        self,
+        file_pattern,
+        schema: Dict,
+        compression_type="GZIP",
+        deserialize: bool = True,
+        format: Literal["dataframe", "dict"] = "dict",
+        min_batch_size: int = None,
+        max_batch_size: int = 1024,
+    ):
+        self.file_pattern = file_pattern
+        self.compression_type = compression_type
+        self.deserialize = deserialize
+        self.format = format
+        self.min_batch_size = min_batch_size
+        self.max_batch_size = max_batch_size
+
+    def _deserialize_data(self, data: bytes):
+        return data
+
+    def _convert_to_df(self, x: Union[Dict, List[Dict]]):
+        import pandas as pd
+
+        if self.min_batch_size is None:
+            return pd.Series(x)  # pd.Series
+        else:
+            return pd.DataFrame(x)
+
+    def expand(self, pcoll):
+        pcoll = pcoll | "Read TFRecord Data" >> ReadFromTFRecord(
+            file_pattern=self.file_pattern,
+            compression_type=self.compression_type,
+        )
+        # Batching
+        if self.min_batch_size is not None:
+            pcoll = pcoll | "Batching" >> beam.BatchElements(
+                min_batch_size=self.min_batch_size,
+                max_batch_size=self.max_batch_size,
+            )
+        # Deserialization
+        if self.deserialize:
+            pcoll = pcoll | "Deserialize" >> beam.Map(
+                self._deserialize_data
+            )
+            # Optionally convert to dataframe if deserialized
+            if self.format == "dataframe":
+                pcoll = pcoll | "Convert Format" >> beam.Map(
+                    self._convert_to_df
+                )
+        return pcoll
+
+
+class WriteTFRecordsData(beam.PTransform):
+    def __init__(
+        self,
+        file_path: str,
+        is_batched: bool = True,
+        serialize_data: bool = True,
+        num_shards: int = 0,
+        shard_name_template: str = "",
+        compression_type: str = CompressionTypes.GZIP,
+    ):
+        filepath, filename = os.path.dirname(
+            file_path
+        ), os.path.basename(file_path)
+        filename, fileext = os.path.splitext(filename)
+        self.filepath_prefix = os.path.join(filepath, filename)
+        self.filepath_suffix = fileext
+        self.num_shards = num_shards
+        self.is_batched = is_batched
+        self.serialize_data = serialize_data
+        self.shard_name_template = shard_name_template
+        self.compression_type = compression_type
+
+    def _serialize_data(self, data: dict):
+        # Convert dict data to tf.train.Example protobuf
+
+        # example.SerializeToString()
+        pass
+
+    def expand(self, pcoll):
+        if self.is_batched:
+            pcoll = pcoll | "Unbatch" >> beam.FlatMap(lambda x: x)
+        if self.serialize_data:
+            pcoll = pcoll | "Serialize Data" >> beam.Map(
+                self._serialize_data
+            )
+        return pcoll | "Write to TFRecord" >> WriteToTFRecord(
+            file_path_prefix=self.filepath_prefix,
+            file_name_suffix=self.filepath_suffix,
+            num_shards=self.num_shards,
+            shard_name_template=self.shard_name_template,
+            compression_type=self.compression_type,
+        )
+
+
 # %% Parquet
 
 
-
 # %% Create the processing function
-def _check_gcs_project_id(input_data_gcp_project_id: str, beam_pipeline_args: List[str]):
+def _check_gcs_project_id(
+    input_data_gcp_project_id: str, beam_pipeline_args: List[str]
+):
     if input_data_gcp_project_id:
         return input_data_gcp_project_id
 
@@ -491,12 +611,10 @@ def _check_gcs_project_id(input_data_gcp_project_id: str, beam_pipeline_args: Li
     for arg in beam_pipeline_args:
         if arg.startswith("--projects="):
             return arg.split("=")[1]
-    
+
     # Check environment
     gcp_project_id = os.environ.get("GCP_PROEJCT_ID")
-    assert (
-        gcp_project_id is not None and gcp_project_id != ""
-    ), (
+    assert gcp_project_id is not None and gcp_project_id != "", (
         "GCP Project ID is needed to determine which environment "
         "the SQL query is running in"
     )
@@ -535,7 +653,9 @@ def beam_data_processing_fn(
                 ]
             ), "Need to specify --temp_location argument when reading from BigQuery"
             # Check if gcp_project_id exists
-            gcp_project_id = _check_gcs_project_id(input_data.gcp_project_id, beam_pipeline_args)
+            gcp_project_id = _check_gcs_project_id(
+                input_data.gcp_project_id, beam_pipeline_args
+            )
             pcoll = p | "Read BigQuery" >> ReadBigQueryData(
                 query=input_data.sql,
                 gcp_project_id=gcp_project_id,
@@ -543,7 +663,7 @@ def beam_data_processing_fn(
                 min_batch_size=batch_size,
                 temp_dataset=input_data.temp_dataset,
             )
-            
+
         # # Run the processing function
         pcoll = pcoll | "Process Data" >> beam.ParDo(
             DataProcessingDoFn(
