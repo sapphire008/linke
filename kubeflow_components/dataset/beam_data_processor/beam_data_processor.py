@@ -31,7 +31,8 @@ from apache_beam.io.gcp.bigquery import (
     BigQueryDisposition,
 )
 from apache_beam.io.tfrecordio import ReadFromTFRecord, WriteToTFRecord
-from tensorflow_metadata.proto.v0 import schema_pb2
+
+from kubeflow_components.dataset.beam_data_processor.utils import deserialize_tf_example, serialize_tf_example
 
 from pdb import set_trace
 
@@ -484,14 +485,17 @@ class WriteBigQueryData(beam.PTransform):
 @dataclass(frozen=True, slots=True)
 class TFRecordSchema:
     name: str
+    type: str
+    
+    def as_dict(self):
+        return {self.name: self.type}
 
 
 @dataclass
 class TFRecordInputData(BaseInputData):
     file: str = None
-    schema: TFRecordSchema = None
+    schema: Dict[str, Literal["byte", "int", "float"]] = {}
     compression_type: str = CompressionTypes.GZIP
-
 
 @dataclass
 class TFRecordOutputData(BaseOutputData):
@@ -504,7 +508,7 @@ class ReadTFRecordData(beam.PTransform):
     def __init__(
         self,
         file_pattern,
-        schema: Dict,
+        schema: Dict[str, Literal["byte", "int", "float"]],
         compression_type="GZIP",
         deserialize: bool = True,
         format: Literal["dataframe", "dict"] = "dict",
@@ -512,14 +516,12 @@ class ReadTFRecordData(beam.PTransform):
         max_batch_size: int = 1024,
     ):
         self.file_pattern = file_pattern
+        self.schema = schema
         self.compression_type = compression_type
         self.deserialize = deserialize
         self.format = format
         self.min_batch_size = min_batch_size
         self.max_batch_size = max_batch_size
-
-    def _deserialize_data(self, data: bytes):
-        return data
 
     def _convert_to_df(self, x: Union[Dict, List[Dict]]):
         import pandas as pd
@@ -534,22 +536,25 @@ class ReadTFRecordData(beam.PTransform):
             file_pattern=self.file_pattern,
             compression_type=self.compression_type,
         )
+        
+        # Deserialization
+        if self.deserialize:
+            pcoll = pcoll | "Deserialize" >> beam.Map(
+                lambda x: deserialize_tf_example(x, self.schema)
+            )
+            
         # Batching
         if self.min_batch_size is not None:
             pcoll = pcoll | "Batching" >> beam.BatchElements(
                 min_batch_size=self.min_batch_size,
                 max_batch_size=self.max_batch_size,
             )
-        # Deserialization
-        if self.deserialize:
-            pcoll = pcoll | "Deserialize" >> beam.Map(
-                self._deserialize_data
+            
+        # Optionally convert to dataframe if deserialized
+        if self.format == "dataframe" and self.deserialize:
+            pcoll = pcoll | "Convert Format" >> beam.Map(
+                self._convert_to_df
             )
-            # Optionally convert to dataframe if deserialized
-            if self.format == "dataframe":
-                pcoll = pcoll | "Convert Format" >> beam.Map(
-                    self._convert_to_df
-                )
         return pcoll
 
 
@@ -557,6 +562,7 @@ class WriteTFRecordsData(beam.PTransform):
     def __init__(
         self,
         file_path: str,
+        schema: Dict[str, Literal["byte", "int", "float"]],
         is_batched: bool = True,
         serialize_data: bool = True,
         num_shards: int = 0,
@@ -569,24 +575,19 @@ class WriteTFRecordsData(beam.PTransform):
         filename, fileext = os.path.splitext(filename)
         self.filepath_prefix = os.path.join(filepath, filename)
         self.filepath_suffix = fileext
+        self.schema = schema
         self.num_shards = num_shards
         self.is_batched = is_batched
         self.serialize_data = serialize_data
         self.shard_name_template = shard_name_template
         self.compression_type = compression_type
 
-    def _serialize_data(self, data: dict):
-        # Convert dict data to tf.train.Example protobuf
-
-        # example.SerializeToString()
-        pass
-
     def expand(self, pcoll):
         if self.is_batched:
             pcoll = pcoll | "Unbatch" >> beam.FlatMap(lambda x: x)
         if self.serialize_data:
             pcoll = pcoll | "Serialize Data" >> beam.Map(
-                self._serialize_data
+                lambda x: serialize_tf_example(x, self.schema)
             )
         return pcoll | "Write to TFRecord" >> WriteToTFRecord(
             file_path_prefix=self.filepath_prefix,
