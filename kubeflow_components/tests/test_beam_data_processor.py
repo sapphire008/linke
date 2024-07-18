@@ -14,6 +14,8 @@ from ..dataset.beam_data_processor.beam_data_processor import (
     BigQueryInputData,
     BigQuerySchemaField,
     BigQueryOutputData,
+    TFRecordInputData,
+    TFRecordOutputData,
 )
 from ..dataset.beam_data_processor.component import (
     beam_data_processing_component,
@@ -136,7 +138,9 @@ def test_bigquery_output_data():
     )
 
 
-@pytest.mark.skip(reason="No longer have access to the test tables. Need to reconfigure in the future.")
+@pytest.mark.skip(
+    reason="No longer have access to the test tables. Need to reconfigure in the future."
+)
 def test_bigquery_reader_writer():
     query = """
     SELECT * EXCEPT(row_id) 
@@ -176,4 +180,32 @@ def test_bigquery_reader_writer():
 
 
 def test_tfrecord_reader_writer():
-    pass
+    input_file = "kubeflow_components/tests/data/input.csv"
+    processing_fn = (
+        "kubeflow_components.tests.conftest.tfrecord_processing_fn"
+    )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # output_file = os.path.join(temp_dir, "output")
+        output_file = "./output.tfrecord"
+        # beam_data_processing_fn(
+        #     input_data=CsvInputData(file=input_file, batch_size=2),
+        #     output_data=TFRecordOutputData(
+        #         file=output_file,
+        #         schema={"A": "int", "B": "byte", "C": "float"},
+        #     ),
+        #     processing_fn=processing_fn,
+        #     init_fn=None,
+        # )
+        beam_data_processing_fn(
+            input_data=TFRecordInputData(
+                file="kubeflow_components/tests/data/input.tfrecord",
+                schema={"A": "int", "B": "byte", "C": "float"},
+                batch_size=2,
+            ),
+            output_data=TFRecordOutputData(
+                file=output_file,
+                schema={"A": "int", "B": "byte", "C": "float"},
+            ),
+            processing_fn=processing_fn,
+            init_fn = None,
+        )

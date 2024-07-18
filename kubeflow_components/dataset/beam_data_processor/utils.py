@@ -123,9 +123,11 @@ def serialize_tf_example(
 
     def serialize(value, dtype):
         if not isinstance(value, (list, tuple, np.ndarray)):
+            if isinstance(value, str):
+                value = value.encode()
             value = [value]
         return feature_map[dtype](value)
-
+    
     features = {
         key: serialize(value, schema[key])
         for key, value in inputs.items()

@@ -32,7 +32,10 @@ from apache_beam.io.gcp.bigquery import (
 )
 from apache_beam.io.tfrecordio import ReadFromTFRecord, WriteToTFRecord
 
-from kubeflow_components.dataset.beam_data_processor.utils import deserialize_tf_example, serialize_tf_example
+from kubeflow_components.dataset.beam_data_processor.utils import (
+    deserialize_tf_example,
+    serialize_tf_example,
+)
 
 from pdb import set_trace
 
@@ -186,6 +189,7 @@ class BaseInputData(BaseData):
 @dataclass
 class BaseOutputData(BaseData):
     pass
+
 
 
 # %% CSV Reader and Writers
@@ -480,28 +484,22 @@ class WriteBigQueryData(beam.PTransform):
 
 
 # %% TFRecords
-
-
-@dataclass(frozen=True, slots=True)
-class TFRecordSchema:
-    name: str
-    type: str
-    
-    def as_dict(self):
-        return {self.name: self.type}
-
-
 @dataclass
 class TFRecordInputData(BaseInputData):
     file: str = None
-    schema: Dict[str, Literal["byte", "int", "float"]] = {}
+    schema: Dict[str, Literal["byte", "int", "float"]] = None
     compression_type: str = CompressionTypes.GZIP
+    deserialize_data: bool = True
+
 
 @dataclass
 class TFRecordOutputData(BaseOutputData):
     file: str = None
-    schema: TFRecordSchema = None
+    schema: Dict[str, Literal["byte", "int", "float"]] = None
     compression_type: str = CompressionTypes.GZIP
+    serialize_data: bool = True
+    num_shards: int = 0
+    shard_name_template: str = ""
 
 
 class ReadTFRecordData(beam.PTransform):
@@ -536,20 +534,20 @@ class ReadTFRecordData(beam.PTransform):
             file_pattern=self.file_pattern,
             compression_type=self.compression_type,
         )
-        
+
         # Deserialization
         if self.deserialize:
             pcoll = pcoll | "Deserialize" >> beam.Map(
                 lambda x: deserialize_tf_example(x, self.schema)
             )
-            
+
         # Batching
         if self.min_batch_size is not None:
             pcoll = pcoll | "Batching" >> beam.BatchElements(
                 min_batch_size=self.min_batch_size,
                 max_batch_size=self.max_batch_size,
             )
-            
+
         # Optionally convert to dataframe if deserialized
         if self.format == "dataframe" and self.deserialize:
             pcoll = pcoll | "Convert Format" >> beam.Map(
@@ -664,6 +662,16 @@ def beam_data_processing_fn(
                 min_batch_size=batch_size,
                 temp_dataset=input_data.temp_dataset,
             )
+        elif isinstance(input_data, TFRecordInputData):
+            pcoll = p | "Read TFRecord" >> ReadTFRecordData(
+                file_pattern=input_data.file,
+                schema=input_data.schema,
+                compression_type=input_data.compression_type,
+                format=input_data.format,
+                min_batch_size=input_data.batch_size,
+            )
+        
+        return pcoll | beam.Map(print)
 
         # # Run the processing function
         pcoll = pcoll | "Process Data" >> beam.ParDo(
@@ -698,4 +706,13 @@ def beam_data_processing_fn(
                 write_disposition=output_data.mode,
                 method=output_data.write_method,
                 is_batched=batch_size is not None,
+            )
+        elif isinstance(output_data, TFRecordOutputData):
+            pcoll = pcoll | "Write TFRecords" >> WriteTFRecordsData(
+                file_path=output_data.file,
+                schema=output_data.schema,
+                is_batched=batch_size is not None,
+                serialize_data=output_data.serialize_data,
+                num_shards=output_data.num_shards,
+                shard_name_template=output_data.shard_name_template,
             )
