@@ -615,7 +615,6 @@ class WriteTFRecordsData(beam.PTransform):
         self,
         file_path: str,
         schema: Dict[str, Literal["byte", "int", "float"]],
-        feature_type: Dict[str, Literal["fixed", "variable"]],
         is_batched: bool = True,
         serialize_data: bool = True,
         num_shards: int = 0,
@@ -767,7 +766,6 @@ def beam_data_processing_fn(
             pcoll = pcoll | "Write TFRecords" >> WriteTFRecordsData(
                 file_path=output_data.file,
                 schema=output_data.schema,
-                feature_type=output_data.feature_type,
                 is_batched=batch_size is not None,
                 serialize_data=output_data.serialize_data,
                 num_shards=output_data.num_shards,
