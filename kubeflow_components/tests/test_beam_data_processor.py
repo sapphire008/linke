@@ -3,9 +3,13 @@
 import os
 import tempfile
 import shutil
+import gzip
 from typing import NamedTuple, List
 import pytest
+import numpy as np
 import pandas as pd
+from apache_beam.io.tfrecordio import _TFRecordUtil
+from apache_beam.coders import BytesCoder
 from ..runner.local_runner import LocalPipelineRunner
 from ..dataset.beam_data_processor.beam_data_processor import (
     beam_data_processing_fn,
@@ -14,13 +18,15 @@ from ..dataset.beam_data_processor.beam_data_processor import (
     BigQueryInputData,
     BigQuerySchemaField,
     BigQueryOutputData,
+    TFRecordFeatureSchema,
     TFRecordInputData,
     TFRecordOutputData,
 )
 from ..dataset.beam_data_processor.component import (
     beam_data_processing_component,
 )
-
+from ..dataset.beam_data_processor.utils import deserialize_tf_example
+from pdb import set_trace
 
 @pytest.mark.skip(
     reason="working already, skip for now during development"
@@ -180,32 +186,46 @@ def test_bigquery_reader_writer():
 
 
 def test_tfrecord_reader_writer():
-    input_file = "kubeflow_components/tests/data/input.csv"
+    input_file = "kubeflow_components/tests/data/input.tfrecord"
     processing_fn = (
         "kubeflow_components.tests.conftest.tfrecord_processing_fn"
     )
     with tempfile.TemporaryDirectory() as temp_dir:
-        # output_file = os.path.join(temp_dir, "output")
-        output_file = "./output.tfrecord"
-        # beam_data_processing_fn(
-        #     input_data=CsvInputData(file=input_file, batch_size=2),
-        #     output_data=TFRecordOutputData(
-        #         file=output_file,
-        #         schema={"A": "int", "B": "byte", "C": "float"},
-        #     ),
-        #     processing_fn=processing_fn,
-        #     init_fn=None,
-        # )
+        output_file = os.path.join(temp_dir, "output")
         beam_data_processing_fn(
             input_data=TFRecordInputData(
-                file="kubeflow_components/tests/data/input.tfrecord",
-                schema={"A": "int", "B": "byte", "C": "float"},
+                file=input_file,
+                format="feature",
+                schema=[
+                    TFRecordFeatureSchema(name="A", type="int", fixed_length=False),
+                    TFRecordFeatureSchema(name="B", type="byte"),
+                    TFRecordFeatureSchema(name="C", type="float"),
+                ],
                 batch_size=2,
             ),
             output_data=TFRecordOutputData(
                 file=output_file,
-                schema={"A": "int", "B": "byte", "C": "float"},
+                schema=[
+                    TFRecordFeatureSchema(name="A", type="byte"),
+                    TFRecordFeatureSchema(name="B", type="float"),
+                    TFRecordFeatureSchema(name="C", type="int")
+                ],
             ),
             processing_fn=processing_fn,
             init_fn = None,
         )
+        # Check the output file
+        _coder = BytesCoder()
+        counter = 0
+        with gzip.open(output_file, "rb") as fid:
+            while True:
+                raw_record = _TFRecordUtil.read_record(fid)
+                counter += 1
+                if raw_record is None:
+                    break
+                record = _coder.decode(raw_record)
+                result = deserialize_tf_example(record, {"A": "byte", "B": "float", "C": "int"})
+                assert isinstance(result["A"][0], bytes), "Expected A to be bytes"
+                assert isinstance(result["B"][0], np.float32), "Expected B to be floats"
+                assert isinstance(result["C"][0], np.int64), "Expected C to be ints"
+        assert counter == 34, "Expecting 34 records"

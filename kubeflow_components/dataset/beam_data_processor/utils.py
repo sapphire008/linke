@@ -4,12 +4,12 @@ import numpy as np
 
 from kubeflow_components.dataset.beam_data_processor import example_pb2
 
+#%% Reading and Writing TFRecords
 TYPENAME_MAPPING = {
     "byte": "bytes_list",
     "float": "float_list",
     "int": "int64_list",
 }
-
 
 # From: https://github.com/vahidk/tfrecord/blob/main/tfrecord/reader.py
 def process_feature(
@@ -35,7 +35,7 @@ def process_feature(
             )
 
     if inferred_typename == "bytes_list":
-        value = value[0]
+        value = np.array(value, dtype=bytes)
     elif inferred_typename == "float_list":
         value = np.array(value, dtype=np.float32)
     elif inferred_typename == "int64_list":

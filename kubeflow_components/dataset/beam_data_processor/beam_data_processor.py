@@ -20,6 +20,7 @@ from typing import (
 from dataclasses import dataclass, asdict, fields
 import keyword
 import importlib
+import numpy as np
 import pandas as pd
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
@@ -189,7 +190,6 @@ class BaseInputData(BaseData):
 @dataclass
 class BaseOutputData(BaseData):
     pass
-
 
 
 # %% CSV Reader and Writers
@@ -484,22 +484,54 @@ class WriteBigQueryData(beam.PTransform):
 
 
 # %% TFRecords
+@dataclass(frozen=True, slots=True)
+class TFRecordFeatureSchema:
+    name: str
+    type: Literal["int", "float", "byte"]
+    fixed_length: bool = True
+
+
 @dataclass
 class TFRecordInputData(BaseInputData):
     file: str = None
-    schema: Dict[str, Literal["byte", "int", "float"]] = None
+    format: Literal["dict", "dataframe", "feature"] = "feature"
+    schema: List[TFRecordFeatureSchema] = None
     compression_type: str = CompressionTypes.GZIP
     deserialize_data: bool = True
+
+    def __post_init__(self):
+        # Converting schema to dict
+        schema = {}
+        feature_type = {}
+        for field in self.schema:
+            schema[field.name] = field.type
+            feature_type[field.name] = (
+                "fixed" if field.fixed_length else "variable"
+            )
+        self.schema = schema
+        self.feature_type = feature_type
 
 
 @dataclass
 class TFRecordOutputData(BaseOutputData):
     file: str = None
-    schema: Dict[str, Literal["byte", "int", "float"]] = None
+    schema: List[TFRecordFeatureSchema] = None
     compression_type: str = CompressionTypes.GZIP
     serialize_data: bool = True
     num_shards: int = 0
     shard_name_template: str = ""
+
+    def __post_init__(self):
+        # Converting schema to dict
+        schema = {}
+        feature_type = {}
+        for field in self.schema:
+            schema[field.name] = field.type
+            feature_type[field.name] = (
+                "fixed" if field.fixed_length else "variable"
+            )
+        self.schema = schema
+        self.feature_type = feature_type
 
 
 class ReadTFRecordData(beam.PTransform):
@@ -507,27 +539,43 @@ class ReadTFRecordData(beam.PTransform):
         self,
         file_pattern,
         schema: Dict[str, Literal["byte", "int", "float"]],
+        feature_type: Dict[str, Literal["fixed", "variable"]],
         compression_type="GZIP",
         deserialize: bool = True,
-        format: Literal["dataframe", "dict"] = "dict",
+        format: Literal["dataframe", "dict", "feature"] = "feature",
         min_batch_size: int = None,
         max_batch_size: int = 1024,
     ):
         self.file_pattern = file_pattern
         self.schema = schema
+        self.feature_type = feature_type
         self.compression_type = compression_type
         self.deserialize = deserialize
         self.format = format
         self.min_batch_size = min_batch_size
         self.max_batch_size = max_batch_size
 
-    def _convert_to_df(self, x: Union[Dict, List[Dict]]):
+    def _convert_result(self, x: Union[Dict, List[Dict]]):
         import pandas as pd
 
         if self.min_batch_size is None:
             return pd.Series(x)  # pd.Series
         else:
-            return pd.DataFrame(x)
+            df = pd.DataFrame(x)
+            if self.format == "feature":
+                # Check if all arrays have the same length
+                # Return a dict of batched features
+                df = df.to_dict("list")
+                # Stacking those fixed length list features
+                df = {
+                    k: (
+                        np.stack(v)
+                        if self.feature_type[k] == "fixed"
+                        else v
+                    )
+                    for k, v in df.items()
+                }
+            return df
 
     def expand(self, pcoll):
         pcoll = pcoll | "Read TFRecord Data" >> ReadFromTFRecord(
@@ -541,7 +589,7 @@ class ReadTFRecordData(beam.PTransform):
                 lambda x: deserialize_tf_example(x, self.schema)
             )
 
-        # Batching
+        # Batching:
         if self.min_batch_size is not None:
             pcoll = pcoll | "Batching" >> beam.BatchElements(
                 min_batch_size=self.min_batch_size,
@@ -549,9 +597,15 @@ class ReadTFRecordData(beam.PTransform):
             )
 
         # Optionally convert to dataframe if deserialized
-        if self.format == "dataframe" and self.deserialize:
+        if self.deserialize and (
+            self.format == "dataframe"
+            or (
+                self.format == "feature"
+                and self.min_batch_size is not None
+            )
+        ):
             pcoll = pcoll | "Convert Format" >> beam.Map(
-                self._convert_to_df
+                self._convert_result
             )
         return pcoll
 
@@ -561,6 +615,7 @@ class WriteTFRecordsData(beam.PTransform):
         self,
         file_path: str,
         schema: Dict[str, Literal["byte", "int", "float"]],
+        feature_type: Dict[str, Literal["fixed", "variable"]],
         is_batched: bool = True,
         serialize_data: bool = True,
         num_shards: int = 0,
@@ -666,12 +721,11 @@ def beam_data_processing_fn(
             pcoll = p | "Read TFRecord" >> ReadTFRecordData(
                 file_pattern=input_data.file,
                 schema=input_data.schema,
+                feature_type=input_data.feature_type,
                 compression_type=input_data.compression_type,
                 format=input_data.format,
                 min_batch_size=input_data.batch_size,
             )
-        
-        return pcoll | beam.Map(print)
 
         # # Run the processing function
         pcoll = pcoll | "Process Data" >> beam.ParDo(
@@ -680,6 +734,8 @@ def beam_data_processing_fn(
                 init_fn=init_fn,
             )
         )
+        
+        # return pcoll | beam.Map(print)
 
         # Output
         if isinstance(output_data, CsvOutputData):
@@ -711,6 +767,7 @@ def beam_data_processing_fn(
             pcoll = pcoll | "Write TFRecords" >> WriteTFRecordsData(
                 file_path=output_data.file,
                 schema=output_data.schema,
+                feature_type=output_data.feature_type,
                 is_batched=batch_size is not None,
                 serialize_data=output_data.serialize_data,
                 num_shards=output_data.num_shards,

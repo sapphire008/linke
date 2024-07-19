@@ -20,10 +20,15 @@ def bq_processing_fn(inputs: List[Dict], config={}):
     return df.to_dict("records")
 
 def tfrecord_processing_fn(inputs: List[Dict], config={}):
+    import numpy as np
     import pandas as pd
-    df = pd.DataFrame(inputs)
-    df = df[["A", "B", "C"]]
-    df["A"] = df["A"].apply(int)
-    df["B"] = df["B"].apply(str)
-    df["C"] = df["C"].apply(float)
-    return df.to_dict("records")
+    from pdb import set_trace
+    
+    inputs["A"] = np.stack(inputs["A"])
+    outputs = {}
+    outputs["A"] = list(map(lambda x: [str(x[0]).encode()], inputs["A"])) # int -> byte
+    outputs["B"] = list(map(lambda x: [float(x[0].decode("utf-8"))], inputs["B"])) # byte -> float
+    outputs["C"] = list(map(lambda x: [int(x[0])], inputs["C"]))
+    # Convert to list of dict before returning
+    outputs = pd.DataFrame(outputs).to_dict("records")
+    return outputs
