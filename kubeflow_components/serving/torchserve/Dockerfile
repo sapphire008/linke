@@ -1,5 +1,5 @@
+# https://github.com/pytorch/serve/blob/master/docker/Dockerfile
 # Or FROM pytorch/torchserve:0.11.1-gpu
-ARG MODEL_STORE_LOCAL_SOURCE
 ARG FROM_IMAGE=pytorch/torchserve:0.11.1-cpu
 ARG MODEL_NAME="torch-serve-model"
 ARG MODEL_VERSION=1.0
@@ -38,5 +38,7 @@ COPY --chown=model-server:model-server config.properties* ./
 # This is expected behaviour. see: https://stackoverflow.com/a/61137388
 ENV TF_CPP_MIN_LOG_LEVEL 2
 
-# Include model files
-COPY ${MODEL_STORE_LOCAL_SOURCE} /home/model-server/model-store
+# Optionally, if serving a static .mar file that is currently accessible
+# from the local directory, one can attempt to include the .mar file
+# in the docker image as well
+# COPY ./model-store/ /home/model-server/model-store
