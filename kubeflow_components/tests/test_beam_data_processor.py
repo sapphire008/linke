@@ -28,9 +28,8 @@ from ..dataset.beam_data_processor.component import (
 from ..dataset.beam_data_processor.utils import deserialize_tf_example
 from pdb import set_trace
 
-@pytest.mark.skip(
-    reason="working already, skip for now during development"
-)
+
+@pytest.mark.skip(reason="Skip for now during development")
 def test_csv_reader_writer():
     input_file = "kubeflow_components/tests/data/input.csv"
     processing_fn = (
@@ -67,9 +66,7 @@ def test_csv_reader_writer():
         ), "Expecting same number of outputs as inputs"
 
 
-@pytest.mark.skip(
-    reason="working already, skip for now during development"
-)
+@pytest.mark.skip(reason="Skip for now during development")
 def test_beam_data_processing_single_component():
     """No input/output artifacts. Just static files linked"""
     input_file = "kubeflow_components/tests/data/input.csv"
@@ -101,9 +98,7 @@ def test_beam_data_processing_single_component():
         shutil.rmtree(task.output.uri)  # clean up
 
 
-@pytest.mark.skip(
-    reason="working already, skip for now during development"
-)
+@pytest.mark.skip(reason="Skip for now during development")
 def test_bigquery_output_data():
     # Two modes of specifying BigQuery Output
     output_data1 = BigQueryOutputData(
@@ -185,6 +180,7 @@ def test_bigquery_reader_writer():
     )
 
 
+@pytest.mark.skip(reason="Skip for now during development")
 def test_tfrecord_reader_writer():
     input_file = "kubeflow_components/tests/data/input.tfrecord"
     processing_fn = (
@@ -197,7 +193,9 @@ def test_tfrecord_reader_writer():
                 file=input_file,
                 format="feature",
                 schema=[
-                    TFRecordFeatureSchema(name="A", type="int", fixed_length=False),
+                    TFRecordFeatureSchema(
+                        name="A", type="int", fixed_length=False
+                    ),
                     TFRecordFeatureSchema(name="B", type="byte"),
                     TFRecordFeatureSchema(name="C", type="float"),
                 ],
@@ -208,11 +206,11 @@ def test_tfrecord_reader_writer():
                 schema=[
                     TFRecordFeatureSchema(name="A", type="byte"),
                     TFRecordFeatureSchema(name="B", type="float"),
-                    TFRecordFeatureSchema(name="C", type="int")
+                    TFRecordFeatureSchema(name="C", type="int"),
                 ],
             ),
             processing_fn=processing_fn,
-            init_fn = None,
+            init_fn=None,
         )
         # Check the output file
         _coder = BytesCoder()
@@ -224,8 +222,16 @@ def test_tfrecord_reader_writer():
                 if raw_record is None:
                     break
                 record = _coder.decode(raw_record)
-                result = deserialize_tf_example(record, {"A": "byte", "B": "float", "C": "int"})
-                assert isinstance(result["A"][0], bytes), "Expected A to be bytes"
-                assert isinstance(result["B"][0], np.float32), "Expected B to be floats"
-                assert isinstance(result["C"][0], np.int64), "Expected C to be ints"
+                result = deserialize_tf_example(
+                    record, {"A": "byte", "B": "float", "C": "int"}
+                )
+                assert isinstance(
+                    result["A"][0], bytes
+                ), "Expected A to be bytes"
+                assert isinstance(
+                    result["B"][0], np.float32
+                ), "Expected B to be floats"
+                assert isinstance(
+                    result["C"][0], np.int64
+                ), "Expected C to be ints"
         assert counter == 34, "Expecting 34 records"

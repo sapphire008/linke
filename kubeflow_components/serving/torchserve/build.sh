@@ -1,0 +1,1 @@
+docker build -f ./Dockerfile -t us-docker.pkg.dev/sotaml-core-prod/ml-serve/torch-serve-base --platform linux/amd64 .
