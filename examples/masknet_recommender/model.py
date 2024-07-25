@@ -155,7 +155,7 @@ class MaskNet(nn.Module):
     block_output_size : int, optional
         Size of output for each block, by default 128
     mask_hidden_dim : int, optional
-        Hidden or aggregation layer size of the mask, 
+        Hidden or aggregation layer size of the mask,
         by default 256
     architecture : Literal['serial', 'parallel'], optional
         MaskNet architecture, by default "serial"
@@ -164,6 +164,7 @@ class MaskNet(nn.Module):
         specifying the hidden layer sizes before output,
         by default [128, 128]
     """
+
     def __init__(
         self,
         feature_specs: Dict[str, FeatureSpec],
@@ -186,7 +187,7 @@ class MaskNet(nn.Module):
                 block_output_size,
                 parallel_projection_sizes,
             )
-        else:  # serial
+        elif architecture == "serial":
             self.initialize_serial_layers(
                 num_blocks, mask_hidden_dim, block_output_size
             )
@@ -251,7 +252,7 @@ class MaskNet(nn.Module):
                 mask_hidden_dim=mask_hidden_dim,
                 # First block is masking on the feature, so the mask
                 # size needs to be the same as the input
-                # the rest of the layers follows block_output_size
+                # the rest of the layers follow block_output_size
                 mask_output_dim=None if ii == 0 else block_output_size,
                 output_dim=block_output_size,
             )
@@ -288,6 +289,7 @@ class MaskNet(nn.Module):
 
 
 if __name__ == "__main__":
+    # Test the model implementation
     batch_size = 4
     seq_len = 50
     feature_specs = {
