@@ -19,9 +19,6 @@ class FeatureSpec:
     )
 
 
-T = TypeVar("T", bound="FeatureEmbedding")
-
-
 class FeatureEmbedding(nn.Module):
     def __init__(self, feature_specs: Dict[str, FeatureSpec]):
         super().__init__()
@@ -72,7 +69,7 @@ class FeatureEmbedding(nn.Module):
         return v_embed, v_embed_ln
 
     @classmethod
-    def from_config(cls, config_file: str) -> T:
+    def from_config(cls, config_file: str):
         with open(config_file, "r") as fid:
             content: Dict = yaml.safe_load(fid)
 
@@ -167,7 +164,7 @@ class MaskNet(nn.Module):
 
     Parameters
     ----------
-    feature_specs : Union[str, Dict[str, FeatureSpec]]
+    feature_specs : Dict[str, FeatureSpec]
         Dictionary of feature specs.
     num_blocks : int, optional
         Number of MaskBlocks, by default 3
@@ -186,22 +183,21 @@ class MaskNet(nn.Module):
 
     def __init__(
         self,
-        feature_specs: Union[str, Dict[str, FeatureSpec]],
+        feature_specs: Dict[str, FeatureSpec],
         num_blocks: int = 3,
         block_output_size: int = 128,
         mask_hidden_dim: int = 256,
-        architecture: Literal["serial", "parallel"] = "serial",
+        architecture: Literal["serial", "parallel"] = "parallel",
         parallel_projection_sizes: List[int] = [128, 128],
     ):
         super().__init__()
+        self.block_output_size = block_output_size
+        self.mask_hidden_dim = mask_hidden_dim
         self.architecture = architecture
+        self.parallel_projection_sizes = parallel_projection_sizes
+
         # Initialize the embedding layers for features
-        if isinstance(feature_specs, dict):
-            self.embedding_layer = FeatureEmbedding(feature_specs)
-        else:  # from .yaml file
-            self.embedding_layer = FeatureEmbedding.from_config(
-                feature_specs
-            )
+        self.embedding_layer = FeatureEmbedding(feature_specs)
 
         # Create layers depending on architecture
         if architecture == "parallel":
@@ -310,6 +306,36 @@ class MaskNet(nn.Module):
         for block in self.mask_blocks:
             mask_block_output = block(v_embed, mask_block_output)
         return mask_block_output
+
+    @classmethod
+    def from_config(cls, config_file: str):
+        with open(config_file, "r") as fid:
+            configs: Dict = yaml.safe_load(fid)
+        # Convert feature_specs
+        feature_specs = {}
+        for feat, spec in configs["feature_specs"].items():
+            feature_specs[feat] = FeatureSpec(**spec)
+        configs["feature_specs"] = feature_specs
+        return cls(**configs)
+
+    def to_config(self, output_file: str):
+        # Convert feature specs to dict
+        feature_specs = {
+            k: asdict(v)
+            for k, v in self.embedding_layer.feature_specs.items()
+        }
+        config = {"feature_specs": feature_specs}
+        config["num_blocks"] = len(self.mask_blocks)
+        config["block_output_size"] = self.block_output_size
+        config["mask_hidden_dim"] = self.mask_hidden_dim
+        config["architecture"] = self.architecture
+        config["parallel_projection_sizes"] = (
+            self.parallel_projection_sizes
+        )
+
+        # Write
+        with open(output_file, "w") as fid:
+            yaml.safe_dump(config, fid)
 
 
 if __name__ == "__main__":

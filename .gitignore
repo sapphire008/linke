@@ -4,3 +4,4 @@ beam-temp-output*
 *.pt
 *.pth
 *.mar
+archive/

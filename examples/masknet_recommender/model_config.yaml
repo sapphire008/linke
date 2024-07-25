@@ -1,0 +1,44 @@
+architecture: parallel
+block_output_size: 128
+feature_specs:
+  account_tenure:
+    embed_size: 10
+    padding_idx: 0
+    sequence_len: null
+    type: categorical
+    vocab_size: 5
+  day_of_week:
+    embed_size: 10
+    padding_idx: 0
+    sequence_len: null
+    type: categorical
+    vocab_size: 7
+  hour_of_day:
+    embed_size: 10
+    padding_idx: null
+    sequence_len: null
+    type: categorical
+    vocab_size: 24
+  payment_tier:
+    embed_size: 10
+    padding_idx: 0
+    sequence_len: null
+    type: categorical
+    vocab_size: 3
+  percent_watched:
+    embed_size: 10
+    padding_idx: null
+    sequence_len: 50
+    type: numerical
+    vocab_size: null
+  watch_history:
+    embed_size: 64
+    padding_idx: 0
+    sequence_len: 50
+    type: categorical
+    vocab_size: 500
+mask_hidden_dim: 256
+num_blocks: 3
+parallel_projection_sizes:
+- 128
+- 128

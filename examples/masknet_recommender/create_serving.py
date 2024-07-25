@@ -13,7 +13,7 @@ if base_dir not in sys.path:
 sub_dir = "examples/masknet_recommender"
 
 from kubeflow_components.serving.torchserve.save_model import export_to_model_archive
-from examples.masknet_recommender.model import MaskNet, FeatureSpec, FeatureEmbedding
+from examples.masknet_recommender.model import MaskNet, FeatureSpec
 
 
 # %% Create the untrained model and save weights
@@ -58,9 +58,9 @@ torch.save(
     os.path.join(base_dir, sub_dir, "model.pth")
 )
 
-# Exporting feature configs
-model.embedding_layer.to_config(
-    os.path.join(base_dir, sub_dir, "feature_config.yaml")
+# Exporting model configs
+model.to_config(
+    os.path.join(base_dir, sub_dir, "model_config.yaml")
 )
 
 
