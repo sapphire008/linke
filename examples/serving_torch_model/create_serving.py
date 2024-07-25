@@ -10,10 +10,10 @@ base_dir = os.path.abspath(os.path.realpath(
 if base_dir not in sys.path:
     sys.path.insert(0, base_dir)
 
-sub_dir = "examples/masknet_recommender"
+sub_dir = "examples/serving_torch_model"
 
 from kubeflow_components.serving.torchserve.save_model import export_to_model_archive
-from examples.masknet_recommender.model import MaskNet, FeatureSpec
+from examples.serving_torch_model.model import MaskNet, FeatureSpec
 
 
 # %% Create the untrained model and save weights
