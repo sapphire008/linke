@@ -25,13 +25,14 @@ feast = {extras = ["gcp"], version = "0.39.1"}
 
 # Install extra dependenceis using --with torch
 [tool.poetry.group.torch.dependencies]
-torch = "2.3.1"
+torch = "2.4.0"
 torchserve = "0.11.1"
 torch-model-archiver = "0.11.1"
 
 [tool.poetry.group.dev.dependencies]
 black = "24.4.2"
 pytest = "^8.2.2"
+spyder-kernels = "2.5.2"
 
 [build-system]
 requires = ["poetry-core"]

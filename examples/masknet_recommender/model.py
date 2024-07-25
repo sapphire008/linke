@@ -1,5 +1,6 @@
-from typing import Dict, Literal, List, Optional
-from dataclasses import dataclass
+from typing import Dict, Literal, List, Optional, TypeVar, Union
+from dataclasses import dataclass, asdict
+import yaml
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -16,6 +17,9 @@ class FeatureSpec:
     sequence_len: int = (
         None  # non-null values indicate sequential features
     )
+
+
+T = TypeVar("T", bound="FeatureEmbedding")
 
 
 class FeatureEmbedding(nn.Module):
@@ -66,6 +70,21 @@ class FeatureEmbedding(nn.Module):
         v_embed_ln = torch.cat(v_embed_ln, dim=-1)
 
         return v_embed, v_embed_ln
+
+    @classmethod
+    def from_config(cls, config_file: str) -> T:
+        with open(config_file, "r") as fid:
+            content: Dict = yaml.safe_load(fid)
+
+        feature_specs = {}
+        for feat, spec in content.items():
+            feature_specs[feat] = FeatureSpec(**spec)
+        return cls(feature_specs)
+
+    def to_config(self, output_file: str):
+        content = {k: asdict(v) for k, v in self.feature_specs.items()}
+        with open(output_file, "w") as fid:
+            yaml.safe_dump(content, fid)
 
 
 class InstanceGuidedMask(nn.Module):
@@ -148,7 +167,7 @@ class MaskNet(nn.Module):
 
     Parameters
     ----------
-    feature_specs : Dict[str, FeatureSpec]
+    feature_specs : Union[str, Dict[str, FeatureSpec]]
         Dictionary of feature specs.
     num_blocks : int, optional
         Number of MaskBlocks, by default 3
@@ -167,7 +186,7 @@ class MaskNet(nn.Module):
 
     def __init__(
         self,
-        feature_specs: Dict[str, FeatureSpec],
+        feature_specs: Union[str, Dict[str, FeatureSpec]],
         num_blocks: int = 3,
         block_output_size: int = 128,
         mask_hidden_dim: int = 256,
@@ -177,7 +196,12 @@ class MaskNet(nn.Module):
         super().__init__()
         self.architecture = architecture
         # Initialize the embedding layers for features
-        self.embedding_layer = FeatureEmbedding(feature_specs)
+        if isinstance(feature_specs, dict):
+            self.embedding_layer = FeatureEmbedding(feature_specs)
+        else:  # from .yaml file
+            self.embedding_layer = FeatureEmbedding.from_config(
+                feature_specs
+            )
 
         # Create layers depending on architecture
         if architecture == "parallel":
@@ -201,7 +225,7 @@ class MaskNet(nn.Module):
     ):
         """Create layers for parallel architecture."""
         # Mask blocks
-        self.mask_blocks = []
+        self.mask_blocks = nn.ModuleList()
         for _ in range(num_blocks):
             block = MaskBlock(
                 input_dim=self.embedding_layer.embed_dim,
@@ -245,7 +269,7 @@ class MaskNet(nn.Module):
     ):
         """Create layers for serial architecture."""
         # Mask blocks
-        self.mask_blocks = []
+        self.mask_blocks = nn.ModuleList()
         for ii in range(num_blocks):
             block = MaskBlock(
                 input_dim=self.embedding_layer.embed_dim,

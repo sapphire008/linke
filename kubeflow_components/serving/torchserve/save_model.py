@@ -14,7 +14,7 @@ def is_valid_model_name(model_name):
     and periods ..
     """
     # Define the regex pattern
-    pattern = r"^[a-zA-Z][a-zA-Z0-9_\-\.]*$"
+    pattern = r"^[A-Za-z0-9][A-Za-z0-9_\-.]*$"
 
     # Use re.match to check if the entire string matches the pattern
     if re.match(pattern, model_name):
@@ -28,11 +28,12 @@ def export_to_model_archive(
     model_version: str,
     model_file: str = "model.py",
     serialized_file: str = "pytorch_model.pth",
-    handler_file: str = "./handler:my_inference_func",
+    handler_file: str = None,
     extra_files: List[str] = [],
     config_file: Optional[str] = None,
     export_path: Optional[str] = None,
     requirement_txt_path: Optional[str] = None,
+    overwrite: bool = False,
 ):
     """
     Save a PyTorch model into .mar model archive file for serving.
@@ -56,12 +57,15 @@ def export_to_model_archive(
     handler_file : str, optional
         TorchServe's default handler name  or handler python
         file path to handle custom TorchServe inference logic.
-        By default "./handler:my_inference_func".
-        Default handler names include:
-        - image_classifier
-        - object_detector
-        - text_classifier
-        - image_segmenter
+        - Default handler names include:
+            - image_classifier
+            - object_detector
+            - text_classifier
+            - image_segmenter
+        - To specify custom handler file, use
+            "./handler.py"
+        - To specify a specific handler function, use
+            "./handler:my_inference_func" (no .py in the file name)
     extra_files : List[Text], optional
         Comma separated path to extra dependency files.
         For example [ "config.json", "spiece.model",
@@ -77,6 +81,9 @@ def export_to_model_archive(
         to the current directory
     requirement_txt_path : str, optional
         requirement.txt file path, by default None
+    overwrite: bool, optional
+        Whether or not to overwrite existing .mar file.
+        Default to False
     """
     # Check if model name is valid
     assert is_valid_model_name(model_name), (
@@ -85,31 +92,35 @@ def export_to_model_archive(
         " and can only contains letters, digits, underscores _, dashes - "
         "and periods ."
     )
+    # from pdb import set_trace; set_trace()
 
     # argument is required to be a comma separated string
     extra_files = ",".join(extra_files)
     # Build command
     cmd = [
         "torch-model-archiver",
-        f'--model-name="{model_name}"',
-        f'--version="{model_version}"',
-        f'--model-file="{model_file}"',
-        f'--serialized-file="{serialized_file}"',
-        f'--handler="{handler_file}"',
-        f'--extra-files="{extra_files}"',
-        f'--runtime="python"',
+        f'--model-name={model_name}',
+        f'--version={model_version}',
+        f'--model-file={model_file}',
+        f'--serialized-file={serialized_file}',
+        f'--handler={handler_file}',
+        f'--extra-files={extra_files}',
+        f'--runtime=python',
     ]
     if config_file:
-        cmd.append(f'--config-file="{config_file}"')
+        cmd.append(f'--config-file={config_file}')
     if export_path:
         cmd.append(
-            f'--export-path="{export_path}"',
+            f'--export-path={export_path}',
         )
     # If requirement.txt is added
     if requirement_txt_path:
         cmd.append(
-            f'requirements-file="{requirement_txt_path}"',
+            f'requirements-file={requirement_txt_path}',
         )
+    # Overwrite
+    if overwrite:
+        cmd.append("--force")
     # Run, create the archive file
     subprocess.call(cmd)
 
