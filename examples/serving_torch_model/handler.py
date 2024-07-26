@@ -12,7 +12,7 @@ from ts.context import Context as TorchServeContext
 
 # This import is okay because the hanlder.py file will be
 # in ths same directory as the model.py file after packaging.
-from .model import MaskNet
+from model import MaskNet
 
 
 class ModelHandler(BaseHandler):
@@ -20,7 +20,7 @@ class ModelHandler(BaseHandler):
     A custom PyTorch model handler implementation.
     """
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super(ModelHandler, self).__init__()
         self._context = None
         self.initialized = False
@@ -110,6 +110,7 @@ class ModelHandler(BaseHandler):
         """
         if not self.initialized:
             self.initialized(context)
+        print("Successfully initialized")
 
         model_input = self.preprocess(data)
         model_output = self.inference(model_input)

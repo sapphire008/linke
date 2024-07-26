@@ -5,3 +5,4 @@ beam-temp-output*
 *.pth
 *.mar
 archive/
+deployment/

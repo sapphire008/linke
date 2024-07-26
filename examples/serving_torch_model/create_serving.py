@@ -1,8 +1,9 @@
 import sys
 import os
 import torch
-import subprocess
-from dataclasses import asdict
+import shutil
+import requests
+import json
 
 base_dir = os.path.abspath(os.path.realpath(
     os.path.join(os.path.dirname(__file__), "../..")
@@ -11,6 +12,7 @@ if base_dir not in sys.path:
     sys.path.insert(0, base_dir)
 
 sub_dir = "examples/serving_torch_model"
+deployment_dir = "deployment"
 
 from kubeflow_components.serving.torchserve.save_model import export_to_model_archive
 from examples.serving_torch_model.model import MaskNet, FeatureSpec
@@ -73,9 +75,81 @@ export_to_model_archive(
     model_file=os.path.join(base_dir, sub_dir, "model.py"),
     serialized_file=os.path.join(base_dir, sub_dir, "model.pth"),
     handler_file=os.path.join(base_dir, sub_dir, "handler:ModelHandler"),
+    config_file=os.path.join(base_dir, sub_dir, "torchserve_config.yaml"),
     export_path=os.path.join(base_dir, sub_dir),
-    extra_files=[os.path.join(base_dir, sub_dir, "feature_config.yaml")],
+    extra_files=[os.path.join(base_dir, sub_dir, "model_config.yaml")],
     overwrite=True,
 )
 
-# %% Start the torchserve service
+# %% Move the compiled files to proper deployment folder
+destination = os.path.join(base_dir, sub_dir, deployment_dir, "model-store")
+os.makedirs(destination, exist_ok=True)
+shutil.copy(
+    os.path.join(base_dir, sub_dir, "masknet_recommender.mar"), 
+    os.path.join(destination,"masknet_recommender.mar")
+)
+
+shutil.copy(os.path.join(base_dir, sub_dir, "config.properties"),
+   os.path.join(base_dir, sub_dir, deployment_dir, "config.properties"))
+
+os.makedirs(os.path.join(destination, "wf-store"), exist_ok=True)
+
+
+# %% Start the torchserve service locally
+cmd = [
+    "torchserve", "--start",
+    "--ncs", # disable snapshot
+    "--ts-config", os.path.join(base_dir, sub_dir, "deployment/config.properties"),
+    "--model-store", os.path.join(base_dir, sub_dir, deployment_dir, "model-store"),
+    "--models", "masknet=masknet_recommender.mar"
+]
+print(" ".join(cmd))
+#subprocess.call(cmd)
+
+#%% Check status
+# Ping if the service is healthy. TorchServe requires a key when making requests
+# There is a key_file.json key found in the directory when torchserve is called
+# !curl http://0.0.0.0:9090/ping -H "Authorization: Bearer <inference key>"
+# Expecting:
+# {
+#   "status": "Healthy"
+# }
+
+url = "http://0.0.0.0:9090/ping"
+headers = {
+    "Authorization": "Bearer {inference_key}".format(inference_key="ckJAzeW9")
+}
+response = requests.get(url, headers=headers)
+print(f"Status Code: {response.status_code}")
+print(f"Response Content: {response.text}")
+
+# %% Make inference using Post
+#!curl -X POST http://0.0.0.0:9090/predictions/masknet -T sample.jpg
+url = "http://0.0.0.0:9090/predictions/masknet"
+batch_size = 1
+seq_len = 50
+data = {
+     "day_of_week": torch.randint(1, 8, (batch_size,)).tolist(),
+     "hour_of_day": torch.randint(0, 24, (batch_size,)).tolist(),
+     "account_tenure": torch.randint(1, 6, (batch_size,)).tolist(),
+     "payment_tier": torch.randint(1, 4, (batch_size,)).tolist(),
+     "watch_history": torch.randint(1, 501, (batch_size, seq_len)).tolist(),
+     "percent_watched": torch.rand((batch_size, seq_len)).tolist(),
+ }
+
+# Convert the dictionary to a JSON string
+json_data = json.dumps(data)
+
+# Set the content type header
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer {inference_key}".format(inference_key="biAKS9CG"),
+}
+
+# Send the POST request
+response = requests.post(url, data=json_data, headers=headers)
+
+# Print the response
+print(f"Status Code: {response.status_code}")
+print(f"Response: {response.text}")
+
