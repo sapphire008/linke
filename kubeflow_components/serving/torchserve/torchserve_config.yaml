@@ -16,7 +16,7 @@ parallelType: pp # pp: pipeline parallel; pptp: tensor+pipeline parallel; custom
 #  it can speed up load time and reduce disk utilization for models with custom dependencies
 #  since it enables reusing custom packages(specified in requirements.txt) and their
 #  supported dependencies that are already available in the base python environment.
-useVenv: False 
+useVenv: False
 
 # See torchrun parameters: https://pytorch.org/docs/stable/elastic/run.html
 torchrun:

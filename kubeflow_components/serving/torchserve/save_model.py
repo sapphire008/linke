@@ -30,7 +30,7 @@ def export_to_model_archive(
     serialized_file: str = "pytorch_model.pth",
     handler_file: str = None,
     extra_files: List[str] = [],
-    config_file: Optional[str] = None,
+    config_file: Optional[str] = "torchserve_config.yaml",
     export_path: Optional[str] = None,
     requirement_txt_path: Optional[str] = None,
     overwrite: bool = False,
