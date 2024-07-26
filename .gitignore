@@ -6,3 +6,5 @@ beam-temp-output*
 *.mar
 archive/
 deployment/
+logs/
+key_file.json

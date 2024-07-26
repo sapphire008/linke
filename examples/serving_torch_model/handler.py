@@ -4,7 +4,7 @@ Initialization and serving logics are implemented here.
 """
 
 import os
-import importlib
+import logging
 from typing import Dict, Any, List
 import torch
 from ts.torch_handler.base_handler import BaseHandler
@@ -14,6 +14,7 @@ from ts.context import Context as TorchServeContext
 # in ths same directory as the model.py file after packaging.
 from model import MaskNet
 
+logger = logging.getLogger(__name__)
 
 class ModelHandler(BaseHandler):
     """
@@ -47,7 +48,7 @@ class ModelHandler(BaseHandler):
 
         # Read model config file
         model_config_path = os.path.join(model_dir, "model_config.yaml")
-        
+
         # Read model serialize/pt file
         serialized_file = self.manifest["model"]["serializedFile"]
         model_weight_path = os.path.join(model_dir, serialized_file)
@@ -57,8 +58,15 @@ class ModelHandler(BaseHandler):
         self.model.to(self.device)
 
         # Load the weights
-        self.model.load_state_dict(torch.load(model_weight_path))
+        model_weights = torch.load(model_weight_path)
+        self.model.load_state_dict(model_weights)
         self.model.eval()  # set to eval model
+        
+        projection_weight = model_weights["output_projection.parallel_output_projection_0.weight"]
+        logger.info(f"Loaded model weights {projection_weight}")
+        acquired_projection_weight = self.model.output_projection.parallel_output_projection_0.weight
+        logger.info(f"Current model weights {acquired_projection_weight}")
+        assert (projection_weight == acquired_projection_weight).all().tolist(), "Not all weights are equal after loading"
 
         self.initialized = True
 
@@ -72,10 +80,13 @@ class ModelHandler(BaseHandler):
         preprocessed_data = data[0].get("data")
         if preprocessed_data is None:
             preprocessed_data = data[0].get("body")
+        # Convert to tensor and ship to device
+        for k, v in preprocessed_data.items():
+            preprocessed_data[k] = torch.tensor(v).to(self.device)
 
         return preprocessed_data
 
-    def inference(self, inputs):
+    def inference(self, inputs: Dict):
         """
         Internal inference methods
         :param model_input: transformed model input data
@@ -83,7 +94,7 @@ class ModelHandler(BaseHandler):
         """
         # Do some inference call to engine here and return output
         with torch.no_grad():
-            model_output = self.model(inputs.to(self.device))
+            model_output = self.model(inputs)
         return model_output
 
     def postprocess(self, inference_output):
@@ -93,7 +104,7 @@ class ModelHandler(BaseHandler):
         :return: list of predict results
         """
         # Take output from network and post-process to desired format
-        postprocess_output = inference_output
+        postprocess_output = inference_output.tolist() # tensor -> list
         return postprocess_output
 
     def handle(
@@ -110,8 +121,10 @@ class ModelHandler(BaseHandler):
         """
         if not self.initialized:
             self.initialized(context)
-        print("Successfully initialized")
-
         model_input = self.preprocess(data)
-        model_output = self.inference(model_input)
-        return self.postprocess(model_output)
+        model_output = self.inference(model_input)        
+        model_output = self.postprocess(model_output)
+        logger.info("model output: " + str(model_output))
+        # Batch size needs to match the expected batch size of the torchserve_config.yaml
+        # Python objects only. Need to cast tensors to lists
+        return model_output

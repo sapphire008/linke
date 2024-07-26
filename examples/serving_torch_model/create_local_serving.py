@@ -4,6 +4,8 @@ import torch
 import shutil
 import requests
 import json
+import subprocess
+import time
 
 base_dir = os.path.abspath(os.path.realpath(
     os.path.join(os.path.dirname(__file__), "../..")
@@ -19,51 +21,51 @@ from examples.serving_torch_model.model import MaskNet, FeatureSpec
 
 
 # %% Create the untrained model and save weights
-feature_specs = {
-    "day_of_week": FeatureSpec(
-        type="categorical",
-        embed_size=10,
-        vocab_size=7,
-        padding_idx=0,
-    ),
-    "hour_of_day": FeatureSpec(
-        type="categorical", embed_size=10, vocab_size=24
-    ),
-    "account_tenure": FeatureSpec(
-        type="categorical",
-        embed_size=10,
-        vocab_size=5,
-        padding_idx=0,
-    ),
-    "payment_tier": FeatureSpec(
-        type="categorical",
-        embed_size=10,
-        vocab_size=3,
-        padding_idx=0,
-    ),
-    "watch_history": FeatureSpec(
-        type="categorical",
-        embed_size=64,
-        vocab_size=500,
-        sequence_len=50,
-        padding_idx=0,
-    ),
-    "percent_watched": FeatureSpec(
-        type="numerical", embed_size=10, sequence_len=50
-    ),
-}
-model = MaskNet(feature_specs)
-model.compile()
+# feature_specs = {
+#     "day_of_week": FeatureSpec(
+#         type="categorical",
+#         embed_size=10,
+#         vocab_size=7,
+#         padding_idx=0,
+#     ),
+#     "hour_of_day": FeatureSpec(
+#         type="categorical", embed_size=10, vocab_size=24
+#     ),
+#     "account_tenure": FeatureSpec(
+#         type="categorical",
+#         embed_size=10,
+#         vocab_size=5,
+#         padding_idx=0,
+#     ),
+#     "payment_tier": FeatureSpec(
+#         type="categorical",
+#         embed_size=10,
+#         vocab_size=3,
+#         padding_idx=0,
+#     ),
+#     "watch_history": FeatureSpec(
+#         type="categorical",
+#         embed_size=64,
+#         vocab_size=500,
+#         sequence_len=50,
+#         padding_idx=0,
+#     ),
+#     "percent_watched": FeatureSpec(
+#         type="numerical", embed_size=10, sequence_len=50
+#     ),
+# }
+# model = MaskNet(feature_specs)
+# model.compile()
 
-torch.save(
-    model.state_dict(), 
-    os.path.join(base_dir, sub_dir, "model.pth")
-)
+# torch.save(
+#     model.state_dict(), 
+#     os.path.join(base_dir, sub_dir, "model.pth")
+# )
 
-# Exporting model configs
-model.to_config(
-    os.path.join(base_dir, sub_dir, "model_config.yaml")
-)
+# # Exporting model configs
+# model.to_config(
+#     os.path.join(base_dir, sub_dir, "model_config.yaml")
+# )
 
 
 
@@ -74,7 +76,7 @@ export_to_model_archive(
     model_name="masknet_recommender", model_version="1.0.0", 
     model_file=os.path.join(base_dir, sub_dir, "model.py"),
     serialized_file=os.path.join(base_dir, sub_dir, "model.pth"),
-    handler_file=os.path.join(base_dir, sub_dir, "handler:ModelHandler"),
+    handler_file=os.path.join(base_dir, sub_dir, "handler.py"),
     config_file=os.path.join(base_dir, sub_dir, "torchserve_config.yaml"),
     export_path=os.path.join(base_dir, sub_dir),
     extra_files=[os.path.join(base_dir, sub_dir, "model_config.yaml")],
@@ -104,7 +106,11 @@ cmd = [
     "--models", "masknet=masknet_recommender.mar"
 ]
 print(" ".join(cmd))
-#subprocess.call(cmd)
+subprocess.call(cmd)
+time.sleep(3.0)
+# Open the key file and get the inference key
+with open("./key_file.json", "r") as fid:
+    INFERENCE_KEY = json.load(fid)["inference"]["key"]
 
 #%% Check status
 # Ping if the service is healthy. TorchServe requires a key when making requests
@@ -117,7 +123,7 @@ print(" ".join(cmd))
 
 url = "http://0.0.0.0:9090/ping"
 headers = {
-    "Authorization": "Bearer {inference_key}".format(inference_key="ckJAzeW9")
+    "Authorization": "Bearer {inference_key}".format(inference_key=INFERENCE_KEY)
 }
 response = requests.get(url, headers=headers)
 print(f"Status Code: {response.status_code}")
@@ -129,12 +135,12 @@ url = "http://0.0.0.0:9090/predictions/masknet"
 batch_size = 1
 seq_len = 50
 data = {
-     "day_of_week": torch.randint(1, 8, (batch_size,)).tolist(),
-     "hour_of_day": torch.randint(0, 24, (batch_size,)).tolist(),
-     "account_tenure": torch.randint(1, 6, (batch_size,)).tolist(),
-     "payment_tier": torch.randint(1, 4, (batch_size,)).tolist(),
-     "watch_history": torch.randint(1, 501, (batch_size, seq_len)).tolist(),
-     "percent_watched": torch.rand((batch_size, seq_len)).tolist(),
+     "day_of_week": [4],
+     "hour_of_day": [15],
+     "account_tenure": [3],
+     "payment_tier": [1],
+     "watch_history": [torch.linspace(1, 500, 50).round().long().tolist()],
+     "percent_watched": [torch.linspace(0.001, 0.999, 50).tolist()],
  }
 
 # Convert the dictionary to a JSON string
@@ -143,7 +149,7 @@ json_data = json.dumps(data)
 # Set the content type header
 headers = {
     "Content-Type": "application/json",
-    "Authorization": "Bearer {inference_key}".format(inference_key="biAKS9CG"),
+    "Authorization": "Bearer {inference_key}".format(inference_key=INFERENCE_KEY),
 }
 
 # Send the POST request
@@ -153,3 +159,5 @@ response = requests.post(url, data=json_data, headers=headers)
 print(f"Status Code: {response.status_code}")
 print(f"Response: {response.text}")
 
+#%%
+subprocess.call(["torchserve", "--stop"])

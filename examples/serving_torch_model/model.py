@@ -24,7 +24,7 @@ class FeatureEmbedding(nn.Module):
         super().__init__()
         self.feature_specs = feature_specs
         # Create embedding layers
-        self.embeddings = {}
+        self.embeddings = nn.ModuleDict()
         self.embed_dim = 0
         for feat, spec in feature_specs.items():
             if spec.type == "categorical":
