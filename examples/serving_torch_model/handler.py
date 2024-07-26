@@ -14,6 +14,7 @@ from ts.context import Context as TorchServeContext
 # in ths same directory as the model.py file after packaging.
 from model import MaskNet
 
+# Start logging
 logger = logging.getLogger(__name__)
 
 class ModelHandler(BaseHandler):
@@ -58,15 +59,9 @@ class ModelHandler(BaseHandler):
         self.model.to(self.device)
 
         # Load the weights
-        model_weights = torch.load(model_weight_path)
+        model_weights = torch.load(model_weight_path, weights_only=True)
         self.model.load_state_dict(model_weights)
         self.model.eval()  # set to eval model
-        
-        projection_weight = model_weights["output_projection.parallel_output_projection_0.weight"]
-        logger.info(f"Loaded model weights {projection_weight}")
-        acquired_projection_weight = self.model.output_projection.parallel_output_projection_0.weight
-        logger.info(f"Current model weights {acquired_projection_weight}")
-        assert (projection_weight == acquired_projection_weight).all().tolist(), "Not all weights are equal after loading"
 
         self.initialized = True
 
@@ -124,7 +119,6 @@ class ModelHandler(BaseHandler):
         model_input = self.preprocess(data)
         model_output = self.inference(model_input)        
         model_output = self.postprocess(model_output)
-        logger.info("model output: " + str(model_output))
         # Batch size needs to match the expected batch size of the torchserve_config.yaml
         # Python objects only. Need to cast tensors to lists
         return model_output
