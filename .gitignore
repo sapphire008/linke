@@ -1,4 +1,5 @@
 __pycache__/
+.DS_Store
 .pytest_cache/
 beam-temp-output*
 *.pt
@@ -7,4 +8,6 @@ beam-temp-output*
 archive/
 deployment/
 logs/
-key_file.json
+key_file.
+eCommerce-behavior-data-from-multi-category-store/
+online_store.db*

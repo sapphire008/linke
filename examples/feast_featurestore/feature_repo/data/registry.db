@@ -1,2 +1,38 @@
-1"$d4884ee8-0e3e-4261-8bea-cc2c08febbf2*‚³ç´Ğ´“²z:
+
+I
+)
+__dummy"
+__dummy_idJfeast_featurestore
+Âµ¶°¨È½Âµ¶°¨È½
+E
+%
+user"user_idJfeast_featurestore
+Âµ¶ĞÁÊ½Ñ”µ¶ÈÂÁ„1"$cdc87574-3374-4ce9-8b28-9ce50697fbc8*ğ¡µ¶ò›2Ş
+«
+user_sessionsfeast_featurestoreuser"
+
+product_id"
+
+event_time"
+
+event_type*
+featuresuser_sessions2€š:
+event_timeZCA./data/eCommerce-behavior-data-from-multi-category-store/dataset2Š1feast.infra.offline_stores.file_source.FileSource¢user_features_source@b
+user_id.
+Âµ¶¨õË½ğ¡µ¶È¤†›
+€®Êì€ÿÒñ:„
+d
+user_activityfeast_featurestore?
+user_sessions
+
+product_id
+
+event_time
+
+event_type
+Âµ¶ñÏ½Âµ¶ñÏ½RÉ
+Æ
+,feast.infra.online_stores.sqlite.SqliteTable"•
+q/Users/edward/Documents/Scripts/kubeflow-components/examples/feast_featurestore/feature_repo/data/online_store.db feast_featurestore_user_sessionsb³
+event_timeZCA./data/eCommerce-behavior-data-from-multi-category-store/dataset2Š1feast.infra.offline_stores.file_source.FileSource¢user_features_sourceªfeast_featurestorez:
 feast_featurestore$ee541ef9-ab10-46c4-9392-4b85cc8f5454

@@ -13,7 +13,7 @@ kfp = "2.8.0"
 numpy = "1.26.4"
 pandas = "2.2.2"
 docker = "7.1.0"
-feast = "0.39.1"
+feast = "0.40.0"
 google-cloud-aiplatform = "1.59.0"
 tensorflow-metadata = "1.15.0"
 protobuf = "4.25.3"
@@ -21,7 +21,7 @@ protobuf = "4.25.3"
 # Install extra dependencies using --with gcp
 [tool.poetry.group.gcp.dependencies]
 apache-beam = {extras = ["gcp"], version = "2.57.0"}
-feast = {extras = ["gcp"], version = "0.39.1"}
+feast = {extras = ["gcp"], version = "0.40.0"}
 
 # Install extra dependenceis using --with torch
 [tool.poetry.group.torch.dependencies]

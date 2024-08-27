@@ -3,7 +3,7 @@ If you haven't already, check out the quickstart guide on Feast's website (http:
 uses this repo. A quick view of what's in this repository's `feature_repo/` directory:
 
 * `data/` contains raw demo parquet data
-* `feature_repo/example_repo.py` contains demo feature definitions
+* `feature_repo/feature_definition.py` contains demo feature definitions
 * `feature_repo/feature_store.yaml` contains a demo setup configuring where data sources are
 * `feature_repo/test_workflow.py` showcases how to run all key Feast commands, including defining, retrieving, and pushing features. 
 
@@ -27,3 +27,15 @@ for more details.
 6. (optional) Deploy feature server instances with `feast serve` to expose endpoints to retrieve online features.
    - See [Python feature server](https://docs.feast.dev/reference/feature-servers/python-feature-server) for details.
    - Use cases can also directly call the Feast client to fetch features as per [Feature retrieval](https://docs.feast.dev/getting-started/concepts/feature-retrieval)
+
+
+
+
+# Setting up Feast FeatureStore with example e-commerce data
+
+* Download data from Kaggle https://www.kaggle.com/datasets/mkechinov/ecommerce-events-history-in-cosmetics-shop and unzip it under `data` directory.
+* Run the `convert_csv2parquet.py` file to convert from CSV to parquet. This is our local data source.
+* Use `feature_store.yaml` to set up the database backends for both online and offline store.
+* Use `feature_definition.py` to provide feature definitions.
+* Run `feast apply` to apply the offline store changes.
+* Run `feast materialize 2019-10-01T00:00:00 2020-02-01T00:00:00 --views user_sessions` to upload the features from offline featurestore to online featurestore
