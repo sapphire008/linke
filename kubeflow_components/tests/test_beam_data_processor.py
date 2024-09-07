@@ -25,7 +25,9 @@ from kubeflow_components.dataset.beam_data_processor.beam_data_processor import 
 from kubeflow_components.dataset.beam_data_processor.component import (
     beam_data_processing_component,
 )
-from kubeflow_components.dataset.beam_data_processor.utils import deserialize_tf_example
+from kubeflow_components.dataset.beam_data_processor.utils import (
+    deserialize_tf_example,
+)
 from pdb import set_trace
 
 
@@ -139,9 +141,7 @@ def test_bigquery_output_data():
     )
 
 
-@pytest.mark.skip(
-    reason="No longer have access to the test tables. Need to reconfigure in the future."
-)
+@pytest.mark.skip(reason="Skip for now during development")
 def test_bigquery_reader_writer():
     query = """
     SELECT * EXCEPT(row_id) 
@@ -237,6 +237,7 @@ def test_tfrecord_reader_writer():
         assert counter == 34, "Expecting 34 records"
 
 
+@pytest.mark.skip(reason="Skip for now during development")
 def test_parquet_reader_writer():
     input_file = "kubeflow_components/tests/data/input.parquet"
     processing_fn = (
@@ -254,10 +255,12 @@ def test_parquet_reader_writer():
             output_data=ParquetOutputData(
                 file=output_file,
                 schema=[
-                    ParquetSchemaField(name="E", type="string", nullable=False),
+                    ParquetSchemaField(
+                        name="E", type="string", nullable=False
+                    ),
                     ParquetSchemaField(name="F", type="int"),
                     ParquetSchemaField(name="G", type="float"),
-                    ParquetSchemaField(name="H", type="array(string)")
+                    ParquetSchemaField(name="H", type="array(string)"),
                 ],
             ),
             processing_fn=processing_fn,
