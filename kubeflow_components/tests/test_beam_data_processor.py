@@ -1,4 +1,5 @@
-"""Make sure to test from root directory"""
+"""Integration test for I/O of various format.
+Make sure to test from root directory"""
 
 import os
 import tempfile
@@ -9,23 +10,22 @@ import pytest
 import numpy as np
 import pandas as pd
 from apache_beam.io.tfrecordio import _TFRecordUtil
+from apache_beam.io.parquetio import _ParquetUtils
 from apache_beam.coders import BytesCoder
-from ..runner.local_runner import LocalPipelineRunner
-from ..dataset.beam_data_processor.beam_data_processor import (
+from kubeflow_components.runner.local_runner import LocalPipelineRunner
+# fmt: off
+from kubeflow_components.dataset.beam_data_processor.beam_data_processor import (
     beam_data_processing_fn,
-    CsvInputData,
-    CsvOutputData,
-    BigQueryInputData,
-    BigQuerySchemaField,
-    BigQueryOutputData,
-    TFRecordFeatureSchema,
-    TFRecordInputData,
-    TFRecordOutputData,
+    CsvInputData, CsvOutputData,
+    BigQueryInputData, BigQuerySchemaField, BigQueryOutputData,
+    TFRecordFeatureSchema, TFRecordInputData, TFRecordOutputData,
+    ParquetSchemaField, ParquetInputData, ParquetOutputData,
 )
-from ..dataset.beam_data_processor.component import (
+# fmt: on
+from kubeflow_components.dataset.beam_data_processor.component import (
     beam_data_processing_component,
 )
-from ..dataset.beam_data_processor.utils import deserialize_tf_example
+from kubeflow_components.dataset.beam_data_processor.utils import deserialize_tf_example
 from pdb import set_trace
 
 
@@ -235,3 +235,40 @@ def test_tfrecord_reader_writer():
                     result["C"][0], np.int64
                 ), "Expected C to be ints"
         assert counter == 34, "Expecting 34 records"
+
+
+def test_parquet_reader_writer():
+    input_file = "kubeflow_components/tests/data/input.parquet"
+    processing_fn = (
+        "kubeflow_components.tests.conftest.parquet_processing_fn"
+    )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        output_file = os.path.join(temp_dir, "output")
+        # output_file = "./data/output.parquet"
+        beam_data_processing_fn(
+            input_data=ParquetInputData(
+                file=input_file,
+                format="dict",
+                batch_size=2,
+            ),
+            output_data=ParquetOutputData(
+                file=output_file,
+                schema=[
+                    ParquetSchemaField(name="E", type="string", nullable=False),
+                    ParquetSchemaField(name="F", type="int"),
+                    ParquetSchemaField(name="G", type="float"),
+                    ParquetSchemaField(name="H", type="array(string)")
+                ],
+            ),
+            processing_fn=processing_fn,
+            init_fn=None,
+        )
+        # Check the output file
+        df_output = pd.read_parquet(output_file)
+        assert set(["E", "F", "G", "H"]) == set(df_output.columns)
+        assert df_output["E"].dtype == "object"
+        assert df_output["F"].dtype == "int"
+        assert df_output["G"].dtype == "float32"
+        assert df_output["H"].dtype == "object"
+        assert isinstance(df_output["H"][0], np.ndarray)
+        assert all(df_output["H"].apply(lambda x: len(x)) > 0)

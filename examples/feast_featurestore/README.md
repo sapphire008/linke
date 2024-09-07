@@ -39,3 +39,9 @@ for more details.
 * Use `feature_definition.py` to provide feature definitions.
 * Run `feast apply` to apply the offline store changes.
 * Run `feast materialize 2019-10-01T00:00:00 2020-02-01T00:00:00 --views user_sessions` to upload the features from offline featurestore to online featurestore
+
+Feast FeatureStore is not a data transformation framework. So it only very limited data transformation in real-time. The goal is always to create our own data transformation pipeline, loaded into the database through Feast (either offline or online directly), and then serve it real time by retrieving the most recent version of the feature.
+
+# Running Feast in production
+
+https://github.com/feast-dev/feast/blob/master/docs/how-to-guides/running-feast-in-production.md

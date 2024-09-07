@@ -7,21 +7,18 @@ Reader and Writer are a set of supported components by Apache Beam
 """
 
 import os
+# fmt: off
 from typing import (
-    Literal,
-    List,
-    Dict,
-    Any,
-    Union,
-    Generator,
-    Callable,
-    get_type_hints,
+    List, Dict, Any, Literal, Optional, Union, Generator,
+    Callable, get_type_hints,
 )
+# fmt: on
 from dataclasses import dataclass, asdict, fields
 import keyword
 import importlib
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.io.filesystem import CompressionTypes
@@ -32,6 +29,7 @@ from apache_beam.io.gcp.bigquery import (
     BigQueryDisposition,
 )
 from apache_beam.io.tfrecordio import ReadFromTFRecord, WriteToTFRecord
+from apache_beam.io.parquetio import ReadFromParquet, WriteToParquet
 
 from kubeflow_components.dataset.beam_data_processor.utils import (
     deserialize_tf_example,
@@ -334,23 +332,13 @@ class BigQueryInputData(BaseInputData):
 @dataclass(frozen=True, slots=True)
 class BigQuerySchemaField:
     name: str
+    # fmt: off
     type: Literal[
-        "STRING",
-        "TIMESTAMP",
-        "INT64",
-        "FLOAT64",
-        "STRUCT",
-        "JSON",
-        "BOOL",
-        "BYTES",
-        "NUMERIC",
-        "INTERVAL",
-        "DATE",
-        "DATETIME",
-        "TIME",
-        "ARRAY",
-        "GEOGRAPHY",
+        "STRING", "TIMESTAMP", "INT64", "FLOAT64", "STRUCT",
+        "JSON", "BOOL", "BYTES", "NUMERIC", "INTERVAL", "DATE",
+        "DATETIME", "TIME", "ARRAY", "GEOGRAPHY",
     ]
+    # fmt: on
     mode: Literal["NULLABLE", "REQUIRED", "REPEATED"]
     description: str = ""
 
@@ -651,6 +639,162 @@ class WriteTFRecordsData(beam.PTransform):
 
 
 # %% Parquet
+@dataclass(slots=True)
+class ParquetSchemaField:
+    """Provides better dtype annotation and than pa.schema"""
+
+    name: str
+    # fmt: off
+    type: Union[Union[pa.DataType,
+        Literal[
+            "string", "int", "float", "bool", 
+            "timestamp", # UTC timestamp in seconds
+            "array(string)", "array(int)", "array(float)", 
+            "array(bool)", "array(timestamp)",
+    ],],]
+    # fmt: on
+    nullable: bool = True
+    metadata: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        if not isinstance(self.type, str):
+            return
+        str2dtype = {
+            "string": pa.string(),
+            "int": pa.int64(),
+            "float": pa.float32(),
+            "bool": pa.bool_(),
+            "timestamp": pa.timestamp("s", tz="UTC"),
+        }
+        # map from string to pa.DataType
+        dtype = self.type.replace(" ", "") # replace any space
+        if dtype.startswith("array"):
+            dtype = self.type.replace("array(", "").replace(")", "")
+            assert dtype in str2dtype, f"Unrecognized dtype {self.type}"
+            self.type = pa.list_(str2dtype[dtype])
+        else:
+            assert dtype in str2dtype, f"Unrecognized dtype {self.type}"
+            self.type = str2dtype[dtype]
+
+    def as_field(self):
+        return pa.field(
+            self.name,
+            self.type,
+            nullable=self.nullable,
+            metadata=self.metadata,
+        )
+
+
+@dataclass
+class ParquetInputData(BaseInputData):
+    file: str = None
+    columns: List[str] = None  # subset of columns
+
+
+@dataclass
+class ParquetOutputData(BaseOutputData):
+    file: str = None
+    schema: Union[List[ParquetSchemaField], pa.Schema] = None
+    # only used when schema is a List[ParquetSchemaField]
+    schema_metadata: Optional[Dict[str, str]] = None
+    num_shards: int = 0
+    shard_name_template: str = ""
+
+    def __post_init__(self):
+        # Converting parqeut schema to pyarrow.Schema
+        if isinstance(self.schema, list) and isinstance(
+            self.schema[0], ParquetSchemaField
+        ):
+            self.schema = pa.schema([f.as_field() for f in self.schema])
+            if self.schema_metadata:
+                self.schema = self.schema.with_metadata(
+                    self.schema_metadata
+                )
+
+
+class ReadParquetData(beam.PTransform):
+    def __init__(
+        self,
+        file_pattern,
+        columns: List[str] = None,
+        format: Literal["dataframe", "dict"] = "dict",
+        min_batch_size: int = None,
+        max_batch_size: int = 1024,
+        **kwargs,
+    ):
+        self.file_pattern = file_pattern
+        self.columns = columns
+        self.format = format
+        self.min_batch_size = min_batch_size
+        self.max_batch_size = max_batch_size
+        self.kwargs = kwargs
+
+    def _convert_to_df(self, x: Union[Dict, List[Dict]]):
+        import pandas as pd
+
+        if self.min_batch_size is None:
+            return pd.Series(x)  # pd.Series
+        else:
+            return pd.DataFrame(x)
+
+    def expand(self, pcoll):
+        pcoll = pcoll | "Read Parquet Data" >> ReadFromParquet(
+            file_pattern=self.file_pattern,
+            columns=self.columns,
+            **self.kwargs,
+        )
+
+        # Batching:
+        if self.min_batch_size is not None:
+            pcoll = pcoll | "Batching" >> beam.BatchElements(
+                min_batch_size=self.min_batch_size,
+                max_batch_size=self.max_batch_size,
+            )
+
+        # Default outputs dictionary
+        if self.format == "dataframe":
+            pcoll = pcoll | "Convert Format" >> beam.Map(
+                self._convert_to_df
+            )
+        return pcoll
+
+
+class WriteParquetsData(beam.PTransform):
+    def __init__(
+        self,
+        file_path: str,
+        schema: Optional[pa.Schema] = None,
+        is_batched: bool = True,
+        num_shards: int = 0,
+        shard_name_template: str = "",
+        **kwargs,
+    ):
+        filepath, filename = os.path.dirname(
+            file_path
+        ), os.path.basename(file_path)
+        filename, fileext = os.path.splitext(filename)
+        self.filepath_prefix = os.path.join(filepath, filename)
+        self.filepath_suffix = fileext
+        self.schema = schema
+        self.num_shards = num_shards
+        self.is_batched = is_batched
+        self.shard_name_template = shard_name_template
+        self.kwargs = kwargs
+
+    def expand(self, pcoll):
+        if self.is_batched:
+            pcoll = pcoll | "Unbatch" >> beam.FlatMap(lambda x: x)
+            
+        # return pcoll | beam.Map(print)
+
+        return pcoll | "Write to Parquet" >> WriteToParquet(
+            file_path_prefix=self.filepath_prefix,
+            file_name_suffix=self.filepath_suffix,
+            schema=self.schema,
+            num_shards=self.num_shards,
+            shard_name_template=self.shard_name_template,
+            **self.kwargs,
+        )
 
 
 # %% Create the processing function
@@ -725,6 +869,13 @@ def beam_data_processing_fn(
                 format=input_data.format,
                 min_batch_size=input_data.batch_size,
             )
+        elif isinstance(input_data, ParquetInputData):
+            pcoll = p | "Read Parquet" >> ReadParquetData(
+                file_pattern=input_data.file,
+                columns=input_data.columns,
+                format=input_data.format,
+                min_batch_size=input_data.batch_size,
+            )
 
         # # Run the processing function
         pcoll = pcoll | "Process Data" >> beam.ParDo(
@@ -733,7 +884,7 @@ def beam_data_processing_fn(
                 init_fn=init_fn,
             )
         )
-        
+
         # return pcoll | beam.Map(print)
 
         # Output
@@ -768,6 +919,14 @@ def beam_data_processing_fn(
                 schema=output_data.schema,
                 is_batched=batch_size is not None,
                 serialize_data=output_data.serialize_data,
+                num_shards=output_data.num_shards,
+                shard_name_template=output_data.shard_name_template,
+            )
+        elif isinstance(output_data, ParquetOutputData):
+            pcoll = pcoll | "Write Parquet" >> WriteParquetsData(
+                file_path=output_data.file,
+                schema=output_data.schema,
+                is_batched=batch_size is not None,
                 num_shards=output_data.num_shards,
                 shard_name_template=output_data.shard_name_template,
             )

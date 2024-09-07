@@ -64,11 +64,6 @@ users_fs = FeatureService(
     features=[user_fv],
 )
 
-#%% Attempt to get a feature
-
-
-
-
 #%%
 # Define a request data source which encodes features / information only
 # available at request time (e.g. part of the user initiated HTTP request)

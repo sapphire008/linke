@@ -14,11 +14,7 @@ store = FeatureStore("./")
 # Define the entity dataframe
 query_user_id = 412120092
 query_timestamp = datetime.datetime.fromisoformat("2019-12-04 20:18:05+00:00")
-entity_df = pd.DataFrame({
-    "user_id": [query_user_id], # join key
-    # looking back from current timestamp, must be named as event_timestamp
-    "event_timestamp": [query_timestamp],
-})
+
 feature_list = [
     "user_sessions:product_id",
     "user_sessions:event_type",
@@ -28,14 +24,24 @@ feature_list = [
 # %%Retrieve offline historical features
 # nearest, newest event that is older than the current event_timestamp
 # that is, the freshest feature
-features = store.get_historical_features(
+entity_df = pd.DataFrame({
+    "user_id": [query_user_id], # join key
+    # looking back from current timestamp, must be named as event_timestamp
+    # with get_historical_features, it is possible to grab historical feature
+    # given a historical event_timestamp
+    "event_timestamp": [query_timestamp],
+})
+historical_features = store.get_historical_features(
     entity_df=entity_df,
     features=feature_list,
     full_feature_names=False
 ).to_df()
 
+
 # %% Retrieve Online featurestore
-features = store.get_online_features(
+# In online featurestore case, there is no way to look for older features
+# It will always grab the latest feature
+online_features = store.get_online_features(
     entity_rows=[{"user_id": query_user_id}],
     features=feature_list
 ).to_dict()
