@@ -67,5 +67,5 @@ def parquet_processing_fn(
         "G": inputs["C"] + np.random.rand(*inputs["C"].shape),
         "H": inputs["D"],
     }
-    outputs = pd.DataFrame(outputs).to_dict("records")
+    # returning as dict features instead of list of dict
     return outputs

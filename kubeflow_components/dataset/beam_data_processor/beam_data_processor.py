@@ -9,10 +9,11 @@ Reader and Writer are a set of supported components by Apache Beam
 import os
 # fmt: off
 from typing import (
-    List, Dict, Any, Literal, Optional, Union, Generator,
-    Callable, get_type_hints,
+    List, Dict, Any, Type, Tuple, Literal, Optional, Union,
+    Generator, Callable, get_type_hints,
 )
 # fmt: on
+import inspect
 from dataclasses import dataclass, asdict, fields
 import keyword
 import importlib
@@ -80,7 +81,7 @@ class DataProcessingDoFn(beam.DoFn):
         self.config = config
 
     @staticmethod
-    def import_function(path: str):
+    def import_function(path: str) -> Callable:
         try:
             module_path, function_name = path.rsplit(".", 1)
             module = importlib.import_module(module_path)
@@ -103,6 +104,23 @@ class DataProcessingDoFn(beam.DoFn):
                 _initialize
             )
 
+    @staticmethod
+    def dict2list(inputs: Union[Dict, pd.DataFrame]) -> List[Dict]:
+        """Assuming values are arrays of the same length."""
+        import pandas as pd
+
+        try:
+            df_inputs = pd.DataFrame(inputs)
+        except:
+            raise (
+                ValueError(
+                    "Failed the attempt to convert from dict of features  "
+                    "to records. Features may not be the same length. "
+                    "Check processing_fn output implementation"
+                )
+            )
+        return df_inputs.to_dict("records")
+
     def process(
         self, element
     ) -> Generator[
@@ -111,6 +129,10 @@ class DataProcessingDoFn(beam.DoFn):
         # Call the processing function
         outputs = self.processing_fn(element, config=self.config)
 
+        # Convert to list of dict iff returning dict
+        if not isinstance(outputs, (list, tuple)):
+            outputs = self.dict2list(outputs)
+        
         yield outputs
 
 
@@ -667,7 +689,7 @@ class ParquetSchemaField:
             "timestamp": pa.timestamp("s", tz="UTC"),
         }
         # map from string to pa.DataType
-        dtype = self.type.replace(" ", "") # replace any space
+        dtype = self.type.replace(" ", "")  # replace any space
         if dtype.startswith("array"):
             dtype = self.type.replace("array(", "").replace(")", "")
             assert dtype in str2dtype, f"Unrecognized dtype {self.type}"
@@ -784,7 +806,7 @@ class WriteParquetsData(beam.PTransform):
     def expand(self, pcoll):
         if self.is_batched:
             pcoll = pcoll | "Unbatch" >> beam.FlatMap(lambda x: x)
-            
+
         # return pcoll | beam.Map(print)
 
         return pcoll | "Write to Parquet" >> WriteToParquet(
