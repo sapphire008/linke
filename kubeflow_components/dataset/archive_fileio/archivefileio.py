@@ -21,6 +21,8 @@ class ArchiveType:
 
 # Supported tar compression types
 class _TARUtil:
+    """Tar archive utilities."""
+
     _COMPRESSION_MAP = {
         CompressionTypes.AUTO: "",  # no compression
         CompressionTypes.UNCOMPRESSED: "",
@@ -89,6 +91,11 @@ class JsonCoder(coders.Coder):
 
 # %% Read
 class _ArchiveFileSource(filebasedsource.FileBasedSource):
+    """
+    A source for archive files
+    Currently only support reading from .json files.
+    """
+
     def __init__(
         self,
         file_pattern: str,
@@ -131,6 +138,11 @@ class _ArchiveFileSource(filebasedsource.FileBasedSource):
 
 
 class ReadFromWebDataset(beam.PTransform):
+    """
+    Read from webdataset that contains sharded
+    .tar archives of json files.
+    """
+
     def __init__(
         self,
         file_pattern: str,
