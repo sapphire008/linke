@@ -1,5 +1,6 @@
 """Archive file data sources"""
 
+import inspect
 import io
 import json
 from typing import Optional
@@ -12,22 +13,60 @@ from apache_beam.io.filesystems import FileSystems
 from apache_beam.coders import coders
 from apache_beam.options.value_provider import check_accessible
 
+from pdb import set_trace
+
 
 class ArchiveType:
     """Enum class for a list of archive type"""
 
     TAR = "tar"
-    ZIP = "zip"
 
 
 # Supported tar compression types
-_TAR_COMPRESSION = {
-    CompressionTypes.AUTO: "",  # no compression
-    CompressionTypes.UNCOMPRESSED: "",
-    CompressionTypes.GZIP: ":gz",
-    CompressionTypes.BZIP2: ":bz2",
-    CompressionTypes.LZMA: ":xz",
-}
+class _TARUtil:
+    _COMPRESSION_MAP = {
+        CompressionTypes.AUTO: "",  # no compression
+        CompressionTypes.UNCOMPRESSED: "",
+        CompressionTypes.GZIP: ":gz",
+        CompressionTypes.BZIP2: ":bz2",
+        CompressionTypes.LZMA: ":xz",
+    }
+
+    @classmethod
+    def get_compression(cls, compression_type):
+        return cls._COMPRESSION_MAP.get(compression_type, "")
+
+    @staticmethod
+    def read_tar_file(file_handle):
+        for member in file_handle.getmembers():
+            # Check if the file name ends with .json
+            if member.name.endswith(".json"):
+                # Extract the file object
+                file = file_handle.extractfile(member)
+                if file:
+                    yield file.read()
+
+    @classmethod
+    def create_writer(cls, file_path, compression_type, mime_type):
+        mode = "w" + cls.get_compression(compression_type)
+        # This makes sure that we can write to s3 or gcs paths as well
+        fobj = FileSystems.create(
+            file_path,
+            mime_type=mime_type,
+            compression_type=CompressionTypes.UNCOMPRESSED,
+        )  # use beam to open write channel
+        writer = tarfile.open(mode=mode, fileobj=fobj)
+        return writer
+
+    @staticmethod
+    def write_single_record(file_handle, encoded_value):
+        file_like_object = io.BytesIO(encoded_value)
+        # Making sure a unique file name per value
+        idx = str(uuid.uuid4())
+        tarinfo = tarfile.TarInfo(name=f"json-{idx}.json")
+        tarinfo.size = len(encoded_value)
+        # Add the file to the tar archive
+        file_handle.addfile(tarinfo, fileobj=file_like_object)
 
 
 class JsonCoder(coders.Coder):
@@ -44,11 +83,63 @@ class JsonCoder(coders.Coder):
 class _ArchiveFileSource(filebasedsource.FileBasedSource):
     def __init__(
         self,
+        file_pattern: str,
         archive_type: str = ArchiveType.TAR,
         compression_type: str = CompressionTypes.AUTO,
         coder: coders.Coder = JsonCoder(),
+        mime_type: str = "application/octet-stream",
+        validate: bool = True,
     ):
-        pass
+        super().__init__(
+            file_pattern=file_pattern,
+            compression_type=compression_type,
+            splittable=False,
+            validate=validate,
+        )
+        self._coder = coder
+        self._archive_type = archive_type
+        self._mime_type = mime_type
+
+    def read_records(self, file_name, offset_range_tracker):
+        if offset_range_tracker.start_position():
+            raise ValueError(
+                "Start position not 0:%s"
+                % offset_range_tracker.start_position()
+            )
+
+        current_offset = offset_range_tracker.start_position()
+
+        fobj = FileSystems.open(
+            file_name,
+            self._mime_type,
+            compression_type=CompressionTypes.UNCOMPRESSED,
+        )
+        mode = "r" + _TARUtil.get_compression(self._compression_type)
+        with tarfile.open(mode=mode, fileobj=fobj) as file_handle:
+            for data in _TARUtil.read_tar_file(file_handle):
+                yield self._coder.decode(data)
+
+
+class ReadFromWebDataset(beam.PTransform):
+    def __init__(
+        self,
+        file_pattern: str,
+        coder: coders.Coder = JsonCoder(),
+        compression_type: str = CompressionTypes.AUTO,
+        validate: bool = True,
+    ):
+
+        super().__init__()
+        self._source = _ArchiveFileSource(
+            file_pattern=file_pattern,
+            archive_type=ArchiveType.TAR,
+            compression_type=compression_type,
+            coder=coder,
+            validate=validate,
+        )
+
+    def expand(self, pvalue):
+        return pvalue.pipeline | iobase.Read(self._source)
 
 
 # %% Write
@@ -62,6 +153,7 @@ class _ArchiveFileSink(filebasedsink.FileBasedSink):
         archive_type: str = ArchiveType.TAR,
         compression_type: str = CompressionTypes.AUTO,
         coder: coders.Coder = JsonCoder(),
+        mime_type: str = "application/octet-stream",
         num_shards: int = 0,
         shard_name_template: str = None,
         max_records_per_shard: Optional[int] = None,
@@ -74,7 +166,7 @@ class _ArchiveFileSink(filebasedsink.FileBasedSink):
             num_shards=num_shards,
             shard_name_template=shard_name_template,
             coder=coder,
-            mime_type="application/octet-stream",
+            mime_type=mime_type,
             compression_type=compression_type,
             max_records_per_shard=max_records_per_shard,
             max_bytes_per_shard=max_bytes_per_shard,
@@ -90,14 +182,9 @@ class _ArchiveFileSink(filebasedsink.FileBasedSink):
         ``close``.
         """
         if self._archive_type == ArchiveType.TAR:
-            mode = "w" + _TAR_COMPRESSION.get(self.compression_type, "")
-            # This makes sure that we can write to s3 or gcs paths as well
-            fobj = FileSystems.create(
-                temp_path,
-                mime_type="application/octet-stream",
-                compression_type=CompressionTypes.UNCOMPRESSED,
-            )  # use beam to open write channel
-            writer = tarfile.open(mode=mode, fileobj=fobj)
+            writer = _TARUtil.create_writer(
+                temp_path, self.compression_type, self.mime_type
+            )
         else:
             raise NotImplementedError(
                 f"Archive type {self._archive_type} not implemented."
@@ -116,21 +203,15 @@ class _ArchiveFileSink(filebasedsink.FileBasedSink):
 
     def write_encoded_record(self, file_handle, encoded_value):
         """Writes a single encoded record."""
-        file_like_object = io.BytesIO(encoded_value)
-
-        # Making sure a unique file name per value
-        idx = str(uuid.uuid4())
-        # Write to file
         if self._archive_type == ArchiveType.TAR:
-            tarinfo = tarfile.TarInfo(name=f"json-{idx}.json")
-            tarinfo.size = len(encoded_value)
-            # Add the file to the tar archive
-            file_handle.addfile(tarinfo, fileobj=file_like_object)
-        elif self._archive_type == ArchiveType.ZIP:
-            pass
+            _TARUtil.write_single_record(file_handle, encoded_value)
+        else:
+            raise NotImplementedError(
+                f"Archive type {self._archive_type} not implemented."
+            )
 
 
-class WriteToWebDataSet(beam.PTransform):
+class WriteToWebDataset(beam.PTransform):
     """
     Write to webdataset.
     Data needs to be serializable to bytes.
@@ -179,14 +260,25 @@ if __name__ == "__main__":
     # fmt: on
     from apache_beam.testing.test_pipeline import TestPipeline
 
+    # with TestPipeline() as p:
+    #     input = (
+    #         p
+    #         | beam.Create(df)
+    #         | WriteToWebDataset(
+    #             file_path_prefix="./sample_data",
+    #             file_name_suffix=".tgz",
+    #             compression_type=CompressionTypes.GZIP,
+    #             max_records_per_shard=4,
+    #         )
+    #     )
+
+    # Read the data
     with TestPipeline() as p:
-        input = (
+        (
             p
-            | beam.Create(df)
-            | WriteToWebDataSet(
-                file_path_prefix="./sample_data",
-                file_name_suffix=".tgz",
+            | ReadFromWebDataset(
+                "./sample_data*.tgz",
                 compression_type=CompressionTypes.GZIP,
-                max_records_per_shard=4,
             )
+            | beam.Map(print)
         )
