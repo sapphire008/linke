@@ -48,12 +48,20 @@ tabular_dataset = (
     wds.WebDataset("./tar_dataset/")
     .to_tuple("json").batched(2)
 )
-#%%
 print("Trying to print dataset")
 for s in tabular_dataset:
     print(s)
     break
 
+#%%
+
+tabular_dataset = (
+    wds.WebDataset("/Users/edward/Documents/Scripts/kubeflow-components/kubeflow_components/dataset/archive_fileio/")
+    .to_tuple("json").batched(2)
+)
+for s in tabular_dataset:
+    print(s)
+    break
 
 
 
