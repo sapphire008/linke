@@ -308,6 +308,17 @@ files = [
 ]
 
 [[package]]
+name = "braceexpand"
+version = "0.1.7"
+description = "Bash-style brace expansion for Python"
+optional = false
+python-versions = "*"
+files = [
+    {file = "braceexpand-0.1.7-py2.py3-none-any.whl", hash = "sha256:91332d53de7828103dcae5773fb43bc34950b0c8160e35e0f44c4427a3b85014"},
+    {file = "braceexpand-0.1.7.tar.gz", hash = "sha256:e6e539bd20eaea53547472ff94f4fb5c3d3bf9d0a89388c4b56663aba765f705"},
+]
+
+[[package]]
 name = "cachetools"
 version = "5.4.0"
 description = "Extensible memoizing collections and decorators"
@@ -3854,6 +3865,17 @@ files = [
 ]
 
 [[package]]
+name = "pyxdg"
+version = "0.28"
+description = "PyXDG contains implementations of freedesktop.org standards in python."
+optional = false
+python-versions = "*"
+files = [
+    {file = "pyxdg-0.28-py2.py3-none-any.whl", hash = "sha256:bdaf595999a0178ecea4052b7f4195569c1ff4d344567bccdc12dfdf02d545ab"},
+    {file = "pyxdg-0.28.tar.gz", hash = "sha256:3267bb3074e934df202af2ee0868575484108581e6f3cb006af1da35395e88b4"},
+]
+
+[[package]]
 name = "pyyaml"
 version = "6.0.1"
 description = "YAML parser and emitter for Python"
@@ -4433,25 +4455,26 @@ files = [
 
 [[package]]
 name = "spyder-kernels"
-version = "2.5.2"
+version = "3.0.0"
 description = "Jupyter kernels for Spyder's console"
 optional = false
-python-versions = "*"
+python-versions = ">=3.8"
 files = [
-    {file = "spyder_kernels-2.5.2-py2.py3-none-any.whl", hash = "sha256:1c95bc09ca20f54c981e7d923708df85c6d6583f683e23923e10d524628bc000"},
-    {file = "spyder_kernels-2.5.2.tar.gz", hash = "sha256:71f252900e02b0394820cc7049f89ed725243f6fccf640b76dd329203c413960"},
+    {file = "spyder_kernels-3.0.0-py3-none-any.whl", hash = "sha256:f0fc98fa3feafc2e0a99f305a5d6b5f614849b2c0cfb851c1dd9a553d9f45660"},
+    {file = "spyder_kernels-3.0.0.tar.gz", hash = "sha256:3d316ea04802ed1feb366405cca03df2349dc9e35ad8653538d2fe48c0e9417f"},
 ]
 
 [package.dependencies]
 cloudpickle = "*"
-ipykernel = {version = ">=6.29.3,<7", markers = "python_version >= \"3.8\""}
+ipykernel = ">=6.29.3,<7"
 ipython = {version = ">=8.13.0,<8.17.1 || >8.17.1,<9", markers = "python_version > \"3.8\""}
-jupyter-client = {version = ">=7.4.9,<9", markers = "python_version >= \"3\""}
-pyzmq = {version = ">=24.0.0", markers = "python_version >= \"3\""}
+jupyter-client = ">=7.4.9,<9"
+pyxdg = {version = ">=0.26", markers = "platform_system == \"Linux\""}
+pyzmq = ">=24.0.0"
 wurlitzer = {version = ">=1.0.3", markers = "platform_system != \"Windows\""}
 
 [package.extras]
-test = ["cython", "dask[distributed]", "django", "flaky", "matplotlib", "mock", "numpy", "pandas", "pillow", "pytest", "pytest-cov", "scipy", "xarray"]
+test = ["cython", "dask[distributed]", "django", "flaky", "h5py", "matplotlib", "mock", "numpy", "pandas", "pillow", "pydicom", "pytest", "pytest-cov", "scipy", "xarray"]
 
 [[package]]
 name = "sqlalchemy"
@@ -5137,6 +5160,22 @@ files = [
 ]
 
 [[package]]
+name = "webdataset"
+version = "0.2.100"
+description = "Record sequential storage for deep learning."
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "webdataset-0.2.100-py3-none-any.whl", hash = "sha256:f70a8e1f6d4f5268b364bd6f77fe8a1168ea14e7e9ed455d71f8d29585fd86af"},
+    {file = "webdataset-0.2.100.tar.gz", hash = "sha256:798e30ff700277f0b963dc0395f3b9de4971a67cffc7cb6d0cb9225df7b68e42"},
+]
+
+[package.dependencies]
+braceexpand = "*"
+numpy = "*"
+pyyaml = "*"
+
+[[package]]
 name = "websocket-client"
 version = "1.8.0"
 description = "WebSocket client for Python with low level API options"
@@ -5405,4 +5444,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">= 3.11, < 3.13"
-content-hash = "fdc5b68472ef7e5da43bd39e53e9991b6960964858d96b53c62e0f385a4e8f08"
+content-hash = "7d1ce906b20e3fa786495a923060011c68ad0f70cb66c40bac291e63ae68a78a"

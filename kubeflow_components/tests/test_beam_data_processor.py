@@ -26,7 +26,7 @@ from kubeflow_components.dataset.beam_data_processor.component import (
     beam_data_processing_component,
 )
 from kubeflow_components.dataset.beam_data_processor.utils import (
-    deserialize_tf_example,
+    TFRecordIOUtils,
 )
 from pdb import set_trace
 
@@ -180,7 +180,7 @@ def test_bigquery_reader_writer():
     )
 
 
-@pytest.mark.skip(reason="Skip for now during development")
+# @pytest.mark.skip(reason="Skip for now during development")
 def test_tfrecord_reader_writer():
     input_file = "kubeflow_components/tests/data/input.tfrecord"
     processing_fn = (
@@ -222,7 +222,7 @@ def test_tfrecord_reader_writer():
                 if raw_record is None:
                     break
                 record = _coder.decode(raw_record)
-                result = deserialize_tf_example(
+                result = TFRecordIOUtils.deserialize_tf_example(
                     record, {"A": "byte", "B": "float", "C": "int"}
                 )
                 assert isinstance(

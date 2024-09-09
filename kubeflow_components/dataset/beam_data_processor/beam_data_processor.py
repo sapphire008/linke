@@ -13,7 +13,7 @@ from typing import (
     Generator, Callable, get_type_hints,
 )
 # fmt: on
-import inspect
+import json
 from dataclasses import dataclass, asdict, fields
 import keyword
 import importlib
@@ -33,8 +33,7 @@ from apache_beam.io.tfrecordio import ReadFromTFRecord, WriteToTFRecord
 from apache_beam.io.parquetio import ReadFromParquet, WriteToParquet
 
 from kubeflow_components.dataset.beam_data_processor.utils import (
-    deserialize_tf_example,
-    serialize_tf_example,
+    TFRecordIOUtils,
 )
 
 from pdb import set_trace
@@ -132,7 +131,7 @@ class DataProcessingDoFn(beam.DoFn):
         # Convert to list of dict iff returning dict
         if not isinstance(outputs, (list, tuple)):
             outputs = self.dict2list(outputs)
-        
+
         yield outputs
 
 
@@ -596,7 +595,9 @@ class ReadTFRecordData(beam.PTransform):
         # Deserialization
         if self.deserialize:
             pcoll = pcoll | "Deserialize" >> beam.Map(
-                lambda x: deserialize_tf_example(x, self.schema)
+                lambda x: TFRecordIOUtils.deserialize_tf_example(
+                    x, self.schema
+                )
             )
 
         # Batching:
@@ -649,7 +650,9 @@ class WriteTFRecordsData(beam.PTransform):
             pcoll = pcoll | "Unbatch" >> beam.FlatMap(lambda x: x)
         if self.serialize_data:
             pcoll = pcoll | "Serialize Data" >> beam.Map(
-                lambda x: serialize_tf_example(x, self.schema)
+                lambda x: TFRecordIOUtils.serialize_tf_example(
+                    x, self.schema
+                )
             )
         return pcoll | "Write to TFRecord" >> WriteToTFRecord(
             file_path_prefix=self.filepath_prefix,
@@ -781,7 +784,93 @@ class ReadParquetData(beam.PTransform):
         return pcoll
 
 
-class WriteParquetsData(beam.PTransform):
+class WriteParquetData(beam.PTransform):
+    def __init__(
+        self,
+        file_path: str,
+        schema: Optional[pa.Schema] = None,
+        is_batched: bool = True,
+        num_shards: int = 0,
+        shard_name_template: str = "",
+        **kwargs,
+    ):
+        filepath, filename = os.path.dirname(
+            file_path
+        ), os.path.basename(file_path)
+        filename, fileext = os.path.splitext(filename)
+        self.filepath_prefix = os.path.join(filepath, filename)
+        self.filepath_suffix = fileext
+        self.schema = schema
+        self.num_shards = num_shards
+        self.is_batched = is_batched
+        self.shard_name_template = shard_name_template
+        self.kwargs = kwargs
+
+    def expand(self, pcoll):
+        if self.is_batched:
+            pcoll = pcoll | "Unbatch" >> beam.FlatMap(lambda x: x)
+
+        # return pcoll | beam.Map(print)
+
+        return pcoll | "Write to Parquet" >> WriteToParquet(
+            file_path_prefix=self.filepath_prefix,
+            file_name_suffix=self.filepath_suffix,
+            schema=self.schema,
+            num_shards=self.num_shards,
+            shard_name_template=self.shard_name_template,
+            **self.kwargs,
+        )
+
+
+# %% WebDataset (Tar files)
+class ReadWebDatasetData(beam.PTransform):
+    def __init__(
+        self,
+        file_pattern,
+        columns: List[str] = None,
+        format: Literal["dataframe", "dict"] = "dict",
+        min_batch_size: int = None,
+        max_batch_size: int = 1024,
+        **kwargs,
+    ):
+        self.file_pattern = file_pattern
+        self.columns = columns
+        self.format = format
+        self.min_batch_size = min_batch_size
+        self.max_batch_size = max_batch_size
+        self.kwargs = kwargs
+
+    def _convert_to_df(self, x: Union[Dict, List[Dict]]):
+        import pandas as pd
+
+        if self.min_batch_size is None:
+            return pd.Series(x)  # pd.Series
+        else:
+            return pd.DataFrame(x)
+
+    def expand(self, pcoll):
+        pcoll = pcoll | "Read Parquet Data" >> ReadFromParquet(
+            file_pattern=self.file_pattern,
+            columns=self.columns,
+            **self.kwargs,
+        )
+
+        # Batching:
+        if self.min_batch_size is not None:
+            pcoll = pcoll | "Batching" >> beam.BatchElements(
+                min_batch_size=self.min_batch_size,
+                max_batch_size=self.max_batch_size,
+            )
+
+        # Default outputs dictionary
+        if self.format == "dataframe":
+            pcoll = pcoll | "Convert Format" >> beam.Map(
+                self._convert_to_df
+            )
+        return pcoll
+
+
+class WriteWebDatasetData(beam.PTransform):
     def __init__(
         self,
         file_path: str,
@@ -945,7 +1034,7 @@ def beam_data_processing_fn(
                 shard_name_template=output_data.shard_name_template,
             )
         elif isinstance(output_data, ParquetOutputData):
-            pcoll = pcoll | "Write Parquet" >> WriteParquetsData(
+            pcoll = pcoll | "Write Parquet" >> WriteParquetData(
                 file_path=output_data.file,
                 schema=output_data.schema,
                 is_batched=batch_size is not None,
