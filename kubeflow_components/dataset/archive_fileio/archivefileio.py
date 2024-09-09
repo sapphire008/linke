@@ -20,6 +20,16 @@ class ArchiveType:
     ZIP = "zip"
 
 
+# Supported tar compression types
+_TAR_COMPRESSION = {
+    CompressionTypes.AUTO: "",  # no compression
+    CompressionTypes.UNCOMPRESSED: "",
+    CompressionTypes.GZIP: ":gz",
+    CompressionTypes.BZIP2: ":bz2",
+    CompressionTypes.LZMA: ":xz",
+}
+
+
 class JsonCoder(coders.Coder):
     """A JSON coder interpreting each line as a JSON string."""
 
@@ -80,18 +90,7 @@ class _ArchiveFileSink(filebasedsink.FileBasedSink):
         ``close``.
         """
         if self._archive_type == ArchiveType.TAR:
-            if self.compression_type in (
-                CompressionTypes.AUTO,
-                CompressionTypes.UNCOMPRESSED,
-            ):  # no compression by default
-                mode = "w"
-            elif self.compression_type == CompressionTypes.GZIP:
-                mode = "w:gz"
-            else:
-                raise ValueError(
-                    "Only uncompressed or gzip compression "
-                    "supported for tar archive"
-                )
+            mode = "w" + _TAR_COMPRESSION.get(self.compression_type, "")
             # This makes sure that we can write to s3 or gcs paths as well
             fobj = FileSystems.create(
                 temp_path,
@@ -137,6 +136,7 @@ class WriteToWebDataSet(beam.PTransform):
     Data needs to be serializable to bytes.
     Currently only support tabular data from ptransform.
     """
+
     def __init__(
         self,
         file_path_prefix: str,
