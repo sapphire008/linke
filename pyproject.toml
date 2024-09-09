@@ -17,6 +17,7 @@ feast = "0.40.0"
 google-cloud-aiplatform = "1.59.0"
 tensorflow-metadata = "1.15.0"
 protobuf = "4.25.3"
+scipy = "1.14.1"
 
 # Install extra dependencies using --with gcp
 [tool.poetry.group.gcp.dependencies]
