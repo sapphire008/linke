@@ -33,6 +33,17 @@ class _TARUtil:
     def get_compression(cls, compression_type):
         return cls._COMPRESSION_MAP.get(compression_type, "")
 
+    @classmethod
+    def create_reader(cls, file_name, compression_type, mime_type):
+        fobj = FileSystems.open(
+            file_name,
+            mime_type,
+            compression_type=CompressionTypes.UNCOMPRESSED,
+        )
+        mode = "r" + cls.get_compression(compression_type)
+        file_handle = tarfile.open(mode=mode, fileobj=fobj)
+        return file_handle
+
     @staticmethod
     def read_tar_file(file_handle):
         for member in file_handle.getmembers():
@@ -106,15 +117,17 @@ class _ArchiveFileSource(filebasedsource.FileBasedSource):
 
         current_offset = offset_range_tracker.start_position()
 
-        fobj = FileSystems.open(
-            file_name,
-            self._mime_type,
-            compression_type=CompressionTypes.UNCOMPRESSED,
-        )
-        mode = "r" + _TARUtil.get_compression(self._compression_type)
-        with tarfile.open(mode=mode, fileobj=fobj) as file_handle:
+        if self._archive_type == ArchiveType.TAR:
+            file_handle = _TARUtil.create_reader(
+                file_name, self._compression_type, self._mime_type
+            )
             for data in _TARUtil.read_tar_file(file_handle):
                 yield self._coder.decode(data)
+            file_handle.close()  # close file handle
+        else:
+            raise NotImplementedError(
+                f"Archive type {self._archive_type} not implemented."
+            )
 
 
 class ReadFromWebDataset(beam.PTransform):
@@ -269,13 +282,13 @@ if __name__ == "__main__":
     #         )
     #     )
 
-    # # Read the data
-    # with TestPipeline() as p:
-    #     (
-    #         p
-    #         | ReadFromWebDataset(
-    #             "./sample_data*.tgz",
-    #             compression_type=CompressionTypes.GZIP,
-    #         )
-    #         | beam.Map(print)
-    #     )
+    # Read the data
+    with TestPipeline() as p:
+        (
+            p
+            | ReadFromWebDataset(
+                "./sample_data*.tgz",
+                compression_type=CompressionTypes.GZIP,
+            )
+            | beam.Map(print)
+        )
