@@ -1,6 +1,5 @@
 """Archive file data sources"""
 
-import inspect
 import io
 import json
 from typing import Optional
@@ -8,12 +7,10 @@ import tarfile
 import uuid
 import apache_beam as beam
 from apache_beam.io import iobase, filebasedsource, filebasedsink
-from apache_beam.io.filesystem import CompressionTypes, FileSystem
+from apache_beam.io.filesystem import CompressionTypes
 from apache_beam.io.filesystems import FileSystems
 from apache_beam.coders import coders
 from apache_beam.options.value_provider import check_accessible
-
-from pdb import set_trace
 
 
 class ArchiveType:
@@ -272,13 +269,13 @@ if __name__ == "__main__":
     #         )
     #     )
 
-    # Read the data
-    with TestPipeline() as p:
-        (
-            p
-            | ReadFromWebDataset(
-                "./sample_data*.tgz",
-                compression_type=CompressionTypes.GZIP,
-            )
-            | beam.Map(print)
-        )
+    # # Read the data
+    # with TestPipeline() as p:
+    #     (
+    #         p
+    #         | ReadFromWebDataset(
+    #             "./sample_data*.tgz",
+    #             compression_type=CompressionTypes.GZIP,
+    #         )
+    #         | beam.Map(print)
+    #     )
