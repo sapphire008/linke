@@ -366,22 +366,6 @@ class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
         if y_weight is not None:
             y_weight, _ = self.sparse_to_dense(y_weight, 0.0)
 
-        # y_pred = np.array([
-        #     ["A", "B", "C", "G", "F"],
-        #     ["B", "A", "D", "H", "F"],
-        #     ["C", "B", "A", "G", "H"],
-        # ])
-        # y_label = np.array([
-        #     ["A", "C", "", ""],
-        #     ["B", "", "", ""],
-        #     ["D", "E", "F", ""]
-        # ])
-        # y_weight = np.array([
-        #     [0.2, 0.4, 0.2, 0.],
-        #     [0.9, 0., 0., 0.],
-        #     [0.1, 0.3, 0.5, 0.]
-        # ])
-
         metrics = {}
         for k in self.top_k:
             pred = y_pred[:, :k]
