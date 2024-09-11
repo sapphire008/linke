@@ -161,7 +161,7 @@ class TopKMetricsPreprocessor(beam.DoFn):
             return res
 
 
-class TopKMetrics:
+class BaseMetric:
     """Similar to tfma.metrics.Metric"""
 
     def __init__(
@@ -242,7 +242,7 @@ class _HitRatioTopKPreprocessor(TopKMetricsPreprocessor):
         yield metrics, len(y_pred)
 
 
-class HitRatioTopK(TopKMetrics):
+class HitRatioTopK(BaseMetric):
     """
     Hit Ratio metric.
     If set size of intersection(label, pred) > 0, score as 1,
@@ -270,7 +270,7 @@ class _NDCGTopKPreprocessor(TopKMetricsPreprocessor):
         pass
 
 
-class NDCGTopK(TopKMetrics):
+class NDCGTopK(BaseMetric):
     def __init__(self, top_k: Union[int, List[int]]):
         super(NDCGTopK, self).__init__(
             name="hit_ratio",
@@ -382,7 +382,7 @@ class _CoverageTopKPreprocessor(TopKMetricsPreprocessor):
         pass
 
 
-class Coverage(TopKMetrics):
+class Coverage(BaseMetric):
     """
     Coverage metric.
 
