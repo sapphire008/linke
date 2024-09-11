@@ -27,9 +27,9 @@ class TestTopKMetricPreprocessor:
     def teardown_method(self, method=None):
         pass
 
-    def test_transform_label_np_ndarray(self):
+    def test_sparse_to_dense_np_ndarray(self):
         label = np.array([[1, 2, 3, 1], [2, 4, 1, 0], [3, 1, 0, 0]])
-        transformed, padding = self.preprocessor.transform_label(label)
+        transformed, padding = self.preprocessor.sparse_to_dense(label)
         assert (transformed == label).all()
         assert padding is None
         label = np.array(
@@ -39,22 +39,22 @@ class TestTopKMetricPreprocessor:
                 ["C", "A", "", ""],
             ]
         )
-        transformed, padding = self.preprocessor.transform_label(label)
+        transformed, padding = self.preprocessor.sparse_to_dense(label)
         assert (transformed == label).all()
         assert padding is None
 
-    def test_transform_label_sparse(self):
+    def test_sparse_to_dense_sparse(self):
         label_data = np.array(
             [[1, 2, 3, 1], [2, 4, 1, 0], [3, 1, 0, 0]]
         )
         label = csr_matrix(label_data)
-        transformed, padding = self.preprocessor.transform_label(label)
+        transformed, padding = self.preprocessor.sparse_to_dense(label)
         assert (transformed == label_data).all()
         assert padding == 0
         label.data = np.array(
             ["A", "B", "C", "A", "B", "D", "A", "C", "A"]
         )
-        transformed, padding = self.preprocessor.transform_label(label)
+        transformed, padding = self.preprocessor.sparse_to_dense(label)
         expected_label = np.array(
             [
                 ["A", "B", "C", "A"],
@@ -65,16 +65,16 @@ class TestTopKMetricPreprocessor:
         assert (transformed == expected_label).all()
         assert padding == ""
 
-    def test_transform_label_list_list(self):
+    def test_sparse_to_dense_list_list(self):
         label = [[1, 2, 3, 1], [2, 4, 1], [3, 1]]
-        transformed, padding = self.preprocessor.transform_label(label)
+        transformed, padding = self.preprocessor.sparse_to_dense(label)
         expected_label = np.array(
             [[1, 2, 3, 1], [2, 4, 1, 0], [3, 1, 0, 0]]
         )
         assert (transformed == expected_label).all()
         assert padding == 0
         label = [["A", "B", "C", "A"], ["B", "D", "A"], ["C", "A"]]
-        transformed, padding = self.preprocessor.transform_label(label)
+        transformed, padding = self.preprocessor.sparse_to_dense(label)
         expected_label = np.array(
             [
                 ["A", "B", "C", "A"],

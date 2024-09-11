@@ -399,12 +399,6 @@ class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
             # Compute final ndcg
             ndcg = dcg / np.where(idcg < 1e-6, 1.0, idcg)
             metrics[k] = ndcg.sum()  # accumulate
-            # print(k, )
-            # set_trace()
-
-        #         1 [0.2 0.  0.4 0.  0. ] [0.4 0.2 0.  0.  0. ] 0.1486983549970351 0.3195079107728942
-        # 1 [0.9 0.  0.  0.  0. ] [0.9 0.  0.  0.  0. ] 0.8660659830736148 0.8660659830736148
-        # 1 [0. 0. 0. 0. 0.] [0. 0. 0. 0. 0.] 0.0 0.0
 
         yield metrics, len(y_pred)
 
