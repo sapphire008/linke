@@ -38,7 +38,7 @@ class BaseMetric:
         self.combiner = combiner
 
 
-class BaseTopKMetricPreprocessor(beam.DoFn):
+class TopKMetricPreprocessor(beam.DoFn):
     """Helper class to define preprocessor beam.DoFn"""
 
     def __init__(
@@ -244,7 +244,7 @@ class SampleTopKMetricCombiner(beam.CombineFn):
 
 
 # Orderless Metrics
-class _HitRatioTopKPreprocessor(BaseTopKMetricPreprocessor):
+class _HitRatioTopKPreprocessor(TopKMetricPreprocessor):
     """Hit Ratio computation logic."""
 
     def process(
@@ -300,7 +300,7 @@ class HitRatioTopK(BaseMetric):
 # Ordered Metrics
 
 
-class _NDCGTopKPreprocessor(BaseTopKMetricPreprocessor):
+class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
     """NDCG computation logic."""
 
     def process(
@@ -353,7 +353,7 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
         self.top_k = [top_k] if isinstance(top_k, int) else top_k
         # vocabulary constrained combiner
         if vocabulary is not None and constrain_accumulation:
-            self.constraint = Counter([{v: 0} for v in vocabulary])
+            self.constraint = Counter({v: 0 for v in vocabulary})
             self.vocabulary = None
         else:
             self.constraint = None
@@ -381,11 +381,10 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
             metrics = {}
             for k in state[0]:
                 acc = accumulator[0].get(k, self.constraint.copy())
-                value = {
-                    vv: acc[vv] + state[0].get(vv, 0)
+                metrics[k] = Counter({
+                    vv: acc[vv] + state[0][k].get(vv, 0)
                     for vv in self.constraint
-                }
-                metrics[k] = Counter(value)
+                })
         n = accumulator[1] + state[1]
         return metrics, n
 
@@ -405,11 +404,10 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
                 for k in accumulator[0]:
                     acc = result[0].get(k, self.constraint.copy())
                     value = {
-                        vv: acc[vv] + accumulator[0].get(vv, 0)
+                        vv: acc[vv] + accumulator[0][k].get(vv, 0)
                         for vv in self.constraint
                     }
                     metrics[k] = Counter(value)
-                    pass
             n = accumulator[1] + result[1]
             result = (metrics, n)
         return result
@@ -420,7 +418,7 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
         return accumulator
 
 
-class _CoverageTopKPreprocessor(BaseTopKMetricPreprocessor):
+class _CoverageTopKPreprocessor(TopKMetricPreprocessor):
     def __init__(
         self, top_k: Union[int, List[int]], include_labels: bool = True
     ):
