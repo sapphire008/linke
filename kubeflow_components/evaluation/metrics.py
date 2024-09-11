@@ -1,6 +1,16 @@
 """Implement recommendation system top-k metrics"""
 
-from typing import List, Dict, Any, Optional, Literal, Generator, Union, Tuple, Iterable
+from typing import (
+    List,
+    Dict,
+    Any,
+    Optional,
+    Literal,
+    Generator,
+    Union,
+    Tuple,
+    Iterable,
+)
 from itertools import zip_longest
 from collections import Counter
 import numpy as np
@@ -14,7 +24,21 @@ DEFAULT_LABEL_KEY = "label"
 DEFAULT_FEATURE_KEY = "feature"
 
 
-class TopKMetricsPreprocessor(beam.DoFn):
+class BaseMetric:
+    """Similar to tfma.metrics.Metric"""
+
+    def __init__(
+        self,
+        name: str,
+        preprocessors: Iterable[beam.DoFn],
+        combiner: beam.CombineFn,
+    ):
+        self.name = name
+        self.preprocessors = preprocessors
+        self.combiner = combiner
+
+
+class BaseTopKMetricPreprocessor(beam.DoFn):
     """Helper class to define preprocessor beam.DoFn"""
 
     def __init__(
@@ -25,6 +49,7 @@ class TopKMetricsPreprocessor(beam.DoFn):
         label_key: str = DEFAULT_LABEL_KEY,
         weight_key: str = None,
     ):
+        super().__init__()
         self.top_k = [top_k] if isinstance(top_k, int) else top_k
         self.feature_key = feature_key or DEFAULT_FEATURE_KEY
         self.prediction_key = prediction_key or DEFAULT_PREDICTION_KEY
@@ -49,7 +74,9 @@ class TopKMetricsPreprocessor(beam.DoFn):
                         f"Unable to handle sparse label with dtype {type(label[0][0])}"
                     )
                 )
-            label = np.array(list(zip_longest(*label, fillvalue=fillvalue))).T
+            label = np.array(
+                list(zip_longest(*label, fillvalue=fillvalue))
+            ).T
             return label, fillvalue
 
         # Create dense tensor label
@@ -64,12 +91,16 @@ class TopKMetricsPreprocessor(beam.DoFn):
         ):
             label: coo_matrix = label.tocoo()
             res = np.full(label.shape, "", dtype=label.data.dtype)
-            np.put(res, label.row * label.shape[1] + label.col, label.data)
+            np.put(
+                res, label.row * label.shape[1] + label.col, label.data
+            )
             return res, ""
 
         # Throw exception for all other label dtypes
         raise (
-            TypeError(f"Unable to handle sparse label with dtype {label.data.dtype}")
+            TypeError(
+                f"Unable to handle sparse label with dtype {label.data.dtype}"
+            )
         )
 
     @staticmethod
@@ -77,7 +108,9 @@ class TopKMetricsPreprocessor(beam.DoFn):
         x: np.ndarray,
         y: np.ndarray,
         pad: Union[int, str] = None,
-        operation: Literal["intersection", "union", "difference"] = "intersection",
+        operation: Literal[
+            "intersection", "union", "difference"
+        ] = "intersection",
         returns: Literal["count", "matrix"] = "count",
     ):
         """
@@ -99,7 +132,9 @@ class TopKMetricsPreprocessor(beam.DoFn):
 
         # Use np.unique to create convert from data -> indices
         # This can appropriately handle all data types, including strings
-        unique, indices = np.unique(np.hstack((x, y)), return_inverse=True)
+        unique, indices = np.unique(
+            np.hstack((x, y)), return_inverse=True
+        )
         n_unique = len(unique)
 
         # From flattened index -> original shape
@@ -124,7 +159,9 @@ class TopKMetricsPreprocessor(beam.DoFn):
             data = np.ones_like(indices, dtype=int)
             data[indices == pad_index] = 0  # filter out pad index
             sparse_matrix = csr_matrix(
-                (data, indices, indptr), shape=(n_d, n_unique), dtype=int
+                (data, indices, indptr),
+                shape=(n_d, n_unique),
+                dtype=int,
             )
             # eliminate padding if any
             sparse_matrix.eliminate_zeros()
@@ -161,24 +198,10 @@ class TopKMetricsPreprocessor(beam.DoFn):
             return res
 
 
-class BaseMetric:
-    """Similar to tfma.metrics.Metric"""
-
-    def __init__(
-        self,
-        name: str,
-        preprocessors: Iterable[Union[beam.DoFn, TopKMetricsPreprocessor]],
-        combiner: beam.CombineFn,
-    ):
-        self.name = name
-        self.preprocessors = preprocessors
-        self.combiner = combiner
-
-
 # %% Sample-wise Metrics
-class SampleTopKMetricsCombiner(beam.CombineFn):
+class SampleTopKMetricCombiner(beam.CombineFn):
     def __init__(self, metric_key: str, top_k: Union[int, List[int]]):
-        super(SampleTopKMetricsCombiner, self).__init__()
+        super(SampleTopKMetricCombiner, self).__init__()
         self.metric_key = metric_key
         self.top_k = [top_k] if isinstance(top_k, int) else top_k
 
@@ -191,7 +214,10 @@ class SampleTopKMetricsCombiner(beam.CombineFn):
         accumulator: Tuple[Dict[int, float], int],
         state: Tuple[Dict[int, float], int],
     ) -> Tuple[Dict[int, float], int]:
-        metrics = {k: accumulator[0].get(k, 0.0) + state[0][k] for k in state[0]}
+        metrics = {
+            k: accumulator[0].get(k, 0.0) + state[0][k]
+            for k in state[0]
+        }
         n = accumulator[1] + state[1]
         return metrics, n
 
@@ -201,7 +227,10 @@ class SampleTopKMetricsCombiner(beam.CombineFn):
         accumulators = iter(accumulators)
         result = next(accumulators)  # get the first item
         for accumulator in accumulators:
-            metric = {k: accumulator[0].get(k, 0.0) + result[0][k] for k in result[0]}
+            metric = {
+                k: accumulator[0].get(k, 0.0) + result[0][k]
+                for k in result[0]
+            }
             n = accumulator[1] + result[1]
             result = (metric, n)
         return result
@@ -209,11 +238,13 @@ class SampleTopKMetricsCombiner(beam.CombineFn):
     def extract_output(
         self, accumulator: Tuple[Dict[int, float], int]
     ) -> Dict[int, float]:
-        return {k: v / accumulator[1] for k, v in accumulator[0].items()}
+        return {
+            k: v / accumulator[1] for k, v in accumulator[0].items()
+        }
 
 
 # Orderless Metrics
-class _HitRatioTopKPreprocessor(TopKMetricsPreprocessor):
+class _HitRatioTopKPreprocessor(BaseTopKMetricPreprocessor):
     """Hit Ratio computation logic."""
 
     def process(
@@ -224,19 +255,25 @@ class _HitRatioTopKPreprocessor(TopKMetricsPreprocessor):
         y_pred: np.ndarray = element[self.prediction_key]
         # dense or sparse tensor, int or str
         if self.label_key in element:
-            y_label: Union[np.ndarray, sparray, List[List]] = element[self.label_key]
-        else:
-            # attempt to grab it from the feature key, which is expected to be a dictionary
-            y_label: Union[np.ndarray, sparray, List[List]] = element[self.feature_key][
+            y_label: Union[np.ndarray, sparray, List[List]] = element[
                 self.label_key
             ]
+        else:
+            # attempt to grab it from the feature key, which is expected to be a dictionary
+            y_label: Union[np.ndarray, sparray, List[List]] = element[
+                self.feature_key
+            ][self.label_key]
         y_label, padding = self.transform_label(y_label)
 
         metrics = {}
         for k in self.top_k:
             pred = y_pred[:, :k]
             y_intersect = self.set_operation(
-                y_label, pred, pad=padding, operation="intersection", returns="count"
+                y_label,
+                pred,
+                pad=padding,
+                operation="intersection",
+                returns="count",
             )
             metrics[k] = (y_intersect > 0).sum()
         yield metrics, len(y_pred)
@@ -254,14 +291,16 @@ class HitRatioTopK(BaseMetric):
         super(HitRatioTopK, self).__init__(
             name="hit_ratio",
             preprocessors=[_HitRatioTopKPreprocessor(top_k=top_k)],
-            combiner=SampleTopKMetricsCombiner(metric_key="hit_ratio", top_k=top_k),
+            combiner=SampleTopKMetricCombiner(
+                metric_key="hit_ratio", top_k=top_k
+            ),
         )
 
 
 # Ordered Metrics
 
 
-class _NDCGTopKPreprocessor(TopKMetricsPreprocessor):
+class _NDCGTopKPreprocessor(BaseTopKMetricPreprocessor):
     """NDCG computation logic."""
 
     def process(
@@ -275,12 +314,14 @@ class NDCGTopK(BaseMetric):
         super(NDCGTopK, self).__init__(
             name="hit_ratio",
             preprocessors=[_NDCGTopKPreprocessor(top_k=top_k)],
-            combiner=SampleTopKMetricsCombiner(metric_key="ndcg", top_k=top_k),
+            combiner=SampleTopKMetricCombiner(
+                metric_key="ndcg", top_k=top_k
+            ),
         )
 
 
 # %% Population Level Metrics
-class PopulationTopKMetricsCombiner(beam.CombineFn):
+class PopulationTopKMetricCombiner(beam.CombineFn):
     def __init__(
         self,
         metric_key: str,
@@ -295,7 +336,7 @@ class PopulationTopKMetricsCombiner(beam.CombineFn):
             top_k (Union[int, List[int]]): Either integer or a list of integers for top_k
                 metric calculation
             vocabulary (List[str], optional): A list of vocabulary for the counted class.
-                When not None and constrain_accumulation is True, 
+                When not None and constrain_accumulation is True,
                 limit the counter to the list vocabulary provided during accumulation
                 (exchange time for space, i.e. reduce memory, increase computational cost).
                   - If the count for a specific value/token is missing, a 0 count is retained.
@@ -307,7 +348,7 @@ class PopulationTopKMetricsCombiner(beam.CombineFn):
             constraint_accumulation (bool): constrain to the vocabulary during
                 the accumulatino process. See vocabulary. Default to False.
         """
-        super(PopulationTopKMetricsCombiner, self).__init__()
+        super().__init__()
         self.metric_key = metric_key
         self.top_k = [top_k] if isinstance(top_k, int) else top_k
         # vocabulary constrained combiner
@@ -332,14 +373,18 @@ class PopulationTopKMetricsCombiner(beam.CombineFn):
     ) -> Tuple[Dict[int, Counter], int]:
         if self.constraint is None:
             metrics = {
-                k: accumulator[0].get(k, Counter()) + state[0][k] for k in state[0]
+                k: accumulator[0].get(k, Counter()) + state[0][k]
+                for k in state[0]
             }
         else:
             # Remove any extra keys in the state, retain any 0 counts
             metrics = {}
             for k in state[0]:
                 acc = accumulator[0].get(k, self.constraint.copy())
-                value = {vv: acc[vv] + state[0].get(vv, 0) for vv in self.constraint}
+                value = {
+                    vv: acc[vv] + state[0].get(vv, 0)
+                    for vv in self.constraint
+                }
                 metrics[k] = Counter(value)
         n = accumulator[1] + state[1]
         return metrics, n
@@ -352,13 +397,17 @@ class PopulationTopKMetricsCombiner(beam.CombineFn):
         for accumulator in accumulators:
             if self.constraint is None:
                 metrics = {
-                    k: accumulator[0].get(k, Counter()) + result[0][k] for k in result[0]
+                    k: accumulator[0].get(k, Counter()) + result[0][k]
+                    for k in result[0]
                 }
             else:
                 metrics = {}
                 for k in accumulator[0]:
                     acc = result[0].get(k, self.constraint.copy())
-                    value = {vv: acc[vv] + accumulator[0].get(vv, 0) for vv in self.constraint}
+                    value = {
+                        vv: acc[vv] + accumulator[0].get(vv, 0)
+                        for vv in self.constraint
+                    }
                     metrics[k] = Counter(value)
                     pass
             n = accumulator[1] + result[1]
@@ -368,11 +417,13 @@ class PopulationTopKMetricsCombiner(beam.CombineFn):
     def extract_output(
         self, accumulator: Tuple[Dict[int, float], int]
     ) -> Dict[int, float]:
-        raise (NotImplementedError("extract_output method not implemented"))
+        return accumulator
 
 
-class _CoverageTopKPreprocessor(TopKMetricsPreprocessor):
-    def __init__(self, top_k: Union[int, List[int]], include_labels: bool = True):
+class _CoverageTopKPreprocessor(BaseTopKMetricPreprocessor):
+    def __init__(
+        self, top_k: Union[int, List[int]], include_labels: bool = True
+    ):
         super(_CoverageTopKPreprocessor, self).__init__(top_k=top_k)
         self.include_labels = include_labels
 
@@ -388,7 +439,9 @@ class Coverage(BaseMetric):
 
     """
 
-    def __init__(self, top_k: Union[int, List[int]], include_labels: bool = True):
+    def __init__(
+        self, top_k: Union[int, List[int]], include_labels: bool = True
+    ):
         """_summary_
 
         Args:
@@ -402,7 +455,11 @@ class Coverage(BaseMetric):
         super(Coverage, self).__init__(
             name="coverage",
             preprocessors=[
-                _CoverageTopKPreprocessor(top_k=top_k, include_labels=include_labels)
+                _CoverageTopKPreprocessor(
+                    top_k=top_k, include_labels=include_labels
+                )
             ],
-            combiner=PopulationTopKMetricsCombiner(metric_key="coverage", top_k=top_k),
+            combiner=PopulationTopKMetricCombiner(
+                metric_key="coverage", top_k=top_k
+            ),
         )
