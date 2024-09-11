@@ -14,8 +14,10 @@ from typing import (
 from itertools import zip_longest
 from collections import Counter
 import numpy as np
-from scipy.sparse import csr_matrix, coo_matrix, sparray, issparse
+from scipy.sparse import csr_matrix, coo_matrix, sparray
 import apache_beam as beam
+
+from pdb import set_trace
 
 
 # %% Metrics Base Classes
@@ -57,7 +59,11 @@ class TopKMetricPreprocessor(beam.DoFn):
         self.weight_key = weight_key
 
     @staticmethod
-    def transform_label(label: Union[np.ndarray, sparray, List[List]]):
+    def sparse_to_dense(
+        label: Union[np.ndarray, sparray, List[List]],
+        pad: Optional[Union[int, float, str]] = None,
+    ):
+        """Convert a sparse tensor to a padded dense tensor."""
         # Handle np.ndarray type
         if isinstance(label, np.ndarray):
             return label, None
@@ -65,9 +71,15 @@ class TopKMetricPreprocessor(beam.DoFn):
         # Handle list type
         if isinstance(label, list):
             if isinstance(label[0][0], int):
-                fillvalue = 0
+                fillvalue = 0 if pad is None else pad
+                if pad is None:
+                    fillvalue = min([min(arr) for arr in label]) - 1
+                else:
+                    fillvalue = pad
+            elif isinstance(label[0][0], float):
+                fillvalue = 0.0 if pad is None else pad
             elif isinstance(label[0][0], str):
-                fillvalue = ""
+                fillvalue = "" if pad is None else pad
             else:
                 raise (
                     TypeError(
@@ -81,9 +93,24 @@ class TopKMetricPreprocessor(beam.DoFn):
 
         # Create dense tensor label
         # For integer matrix, use min_val - 1 as padding
+        label: sparray = label
         if np.issubdtype(label.data.dtype, np.integer):
-            min_val = label.data.min()
-            return label, min_val - 1
+            if pad is None:
+                fillvalue = label.data.min() - 1
+            else:
+                fillvalue = pad
+            label: coo_matrix = label.tocoo()
+            res = np.full(
+                label.shape, fillvalue, dtype=label.data.dtype
+            )
+            np.put(
+                res, label.row * label.shape[1] + label.col, label.data
+            )
+            return res, fillvalue
+
+        # For float matrix, use 0 as padding
+        if np.issubdtype(label.data.dtype, np.floating):
+            return label.todense(), 0.0
 
         # For string matrix, use "" by default
         if np.issubdtype(label.data.dtype, np.object_) or np.issubdtype(
@@ -254,16 +281,13 @@ class _HitRatioTopKPreprocessor(TopKMetricPreprocessor):
         # dense tensor, int or str, (batch_size, None)
         y_pred: np.ndarray = element[self.prediction_key]
         # dense or sparse tensor, int or str
-        if self.label_key in element:
-            y_label: Union[np.ndarray, sparray, List[List]] = element[
-                self.label_key
-            ]
-        else:
-            # attempt to grab it from the feature key, which is expected to be a dictionary
-            y_label: Union[np.ndarray, sparray, List[List]] = element[
-                self.feature_key
-            ][self.label_key]
-        y_label, padding = self.transform_label(y_label)
+        y_label: Union[np.ndarray, sparray, List[List]] = (
+            element[self.label_key]
+            if self.label_key in element
+            # Attempting to get from the feature
+            else element[self.feature_key][self.label_key]
+        )
+        y_label, padding = self.sparse_to_dense(y_label, "")
 
         metrics = {}
         for k in self.top_k:
@@ -287,10 +311,25 @@ class HitRatioTopK(BaseMetric):
     When summarizing, take average for all samples.
     """
 
-    def __init__(self, top_k: Union[int, List[int]]):
+    def __init__(
+        self,
+        top_k: Union[int, List[int]],
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+    ):
         super(HitRatioTopK, self).__init__(
             name="hit_ratio",
-            preprocessors=[_HitRatioTopKPreprocessor(top_k=top_k)],
+            preprocessors=[
+                _HitRatioTopKPreprocessor(
+                    top_k=top_k,
+                    feature_key=feature_key,
+                    prediction_key=prediction_key,
+                    label_key=label_key,
+                    weight_key=weight_key,
+                )
+            ],
             combiner=SampleTopKMetricCombiner(
                 metric_key="hit_ratio", top_k=top_k
             ),
@@ -306,14 +345,90 @@ class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
     def process(
         self, element: Dict[str, Any]
     ) -> Generator[Tuple[Dict, int], None, None]:
-        pass
+        # dense tensor, int or str, (batch_size, None)
+        y_pred: np.ndarray = element[self.prediction_key]
+        # dense or sparse tensor, int or str
+        y_label: Union[np.ndarray, sparray, List[List]] = (
+            element[self.label_key]
+            if self.label_key in element
+            # Attempting to get from the feature
+            else element[self.feature_key][self.label_key]
+        )
+        y_label, _ = self.sparse_to_dense(y_label, "")
+        # for weighted NDCG
+        y_weight: Union[np.ndarray, sparray, List[List], None] = (
+            element[self.weight_key]
+            if self.weight_key in element
+            else element.get(self.feature_key, {}).get(
+                self.weight_key, None
+            )
+        )
+        if y_weight is not None:
+            y_weight, _ = self.sparse_to_dense(y_weight, 0.0)
+
+        # y_pred = np.array([
+        #     ["A", "B", "C", "G", "F"],
+        #     ["B", "A", "D", "H", "F"],
+        #     ["C", "B", "A", "G", "H"],
+        # ])
+        # y_label = np.array([
+        #     ["A", "C", "", ""],
+        #     ["B", "", "", ""],
+        #     ["D", "E", "F", ""]
+        # ])
+        # y_weight = np.array([
+        #     [0.2, 0.4, 0.2, 0.],
+        #     [0.9, 0., 0., 0.],
+        #     [0.1, 0.3, 0.5, 0.]
+        # ])
+
+        metrics = {}
+        for k in self.top_k:
+            pred = y_pred[:, :k]
+            indicator = pred[..., None] == y_label[:, None]
+            if y_weight is None:  # binary score
+                rel = indicator.any(2).astype(float)
+            else:
+                rel = (indicator * y_weight[:, None, :]).sum(2)
+            dcg = (2**rel - 1) / np.log2(2 + np.arange(k)[None, :])
+            dcg = dcg.sum(axis=1)
+            # Ideal ordering
+            ideal = np.sort(rel, axis=1)[:, ::-1]
+            idcg = (2**ideal - 1) / np.log2(2 + np.arange(k)[None, :])
+            idcg = idcg.sum(axis=1)
+            # Compute final ndcg
+            ndcg = dcg / np.where(idcg < 1e-6, 1.0, idcg)
+            metrics[k] = ndcg.sum()  # accumulate
+            # print(k, )
+            # set_trace()
+
+        #         1 [0.2 0.  0.4 0.  0. ] [0.4 0.2 0.  0.  0. ] 0.1486983549970351 0.3195079107728942
+        # 1 [0.9 0.  0.  0.  0. ] [0.9 0.  0.  0.  0. ] 0.8660659830736148 0.8660659830736148
+        # 1 [0. 0. 0. 0. 0.] [0. 0. 0. 0. 0.] 0.0 0.0
+
+        yield metrics, len(y_pred)
 
 
 class NDCGTopK(BaseMetric):
-    def __init__(self, top_k: Union[int, List[int]]):
+    def __init__(
+        self,
+        top_k: Union[int, List[int]],
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+    ):
         super(NDCGTopK, self).__init__(
             name="hit_ratio",
-            preprocessors=[_NDCGTopKPreprocessor(top_k=top_k)],
+            preprocessors=[
+                _NDCGTopKPreprocessor(
+                    top_k=top_k,
+                    feature_key=feature_key,
+                    prediction_key=prediction_key,
+                    label_key=label_key,
+                    weight_key=weight_key,
+                )
+            ],
             combiner=SampleTopKMetricCombiner(
                 metric_key="ndcg", top_k=top_k
             ),
@@ -381,10 +496,12 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
             metrics = {}
             for k in state[0]:
                 acc = accumulator[0].get(k, self.constraint.copy())
-                metrics[k] = Counter({
-                    vv: acc[vv] + state[0][k].get(vv, 0)
-                    for vv in self.constraint
-                })
+                metrics[k] = Counter(
+                    {
+                        vv: acc[vv] + state[0][k].get(vv, 0)
+                        for vv in self.constraint
+                    }
+                )
         n = accumulator[1] + state[1]
         return metrics, n
 
@@ -420,9 +537,21 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
 
 class _CoverageTopKPreprocessor(TopKMetricPreprocessor):
     def __init__(
-        self, top_k: Union[int, List[int]], include_labels: bool = True
+        self,
+        top_k: Union[int, List[int]],
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+        include_labels: bool = True,
     ):
-        super(_CoverageTopKPreprocessor, self).__init__(top_k=top_k)
+        super(_CoverageTopKPreprocessor, self).__init__(
+            top_k=top_k,
+            feature_key=feature_key,
+            prediction_key=prediction_key,
+            label_key=label_key,
+            weight_key=weight_key,
+        )
         self.include_labels = include_labels
 
     def process(
@@ -434,11 +563,18 @@ class _CoverageTopKPreprocessor(TopKMetricPreprocessor):
 class Coverage(BaseMetric):
     """
     Coverage metric.
-
     """
 
     def __init__(
-        self, top_k: Union[int, List[int]], include_labels: bool = True
+        self,
+        top_k: Union[int, List[int]],
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+        include_labels: bool = True,
+        vocabulary: Optional[List[str]] = None,
+        constrain_accumulation: bool = False,
     ):
         """_summary_
 
@@ -454,10 +590,18 @@ class Coverage(BaseMetric):
             name="coverage",
             preprocessors=[
                 _CoverageTopKPreprocessor(
-                    top_k=top_k, include_labels=include_labels
+                    top_k=top_k,
+                    feature_key=feature_key,
+                    prediction_key=prediction_key,
+                    label_key=label_key,
+                    weight_key=weight_key,
+                    include_labels=include_labels,
                 )
             ],
             combiner=PopulationTopKMetricCombiner(
-                metric_key="coverage", top_k=top_k
+                metric_key="coverage",
+                top_k=top_k,
+                vocabulary=vocabulary,
+                constrain_accumulation=constrain_accumulation,
             ),
         )
