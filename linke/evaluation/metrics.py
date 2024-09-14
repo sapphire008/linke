@@ -437,11 +437,11 @@ class NDCGTopK(BaseMetric):
 class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
     """Accumulate a Counter for categories/tokens in the predicion,
     along with other fields in the inputs.
-    
+
     - other_fields: additional fields to accumulate the values on.
         Assuming this field/feature shares the same vocabulary set
         as the prediction.
-    - vocabulary_fields: use a list of "{feature_name}" or "label", 
+    - vocabulary_fields: use a list of "{feature_name}" or "label",
         "prediction" to estimate the overall vocabulary as we iterate
         through the data. This is helpful when we do not know the
         vocabulary beforehand.
@@ -484,7 +484,10 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
         for k in self.top_k:
             results[k] = Counter(y_pred[:, :k].ravel())
         # Additional fields for accumulation
-        if "label" in self.other_fields or "label" in self.vocabulary_fields:
+        if (
+            "label" in self.other_fields
+            or "label" in self.vocabulary_fields
+        ):
             y_label: Union[np.ndarray, sparray, List[List]] = (
                 element[self.label_key]
                 if self.label_key in element
@@ -508,13 +511,10 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
                 results[field] = Counter(feature)
             if field in self.vocabulary_fields:
                 _vocab.update(set(feature))
-        
-        # Use the estimated vocab for keys of the Counter result
-        # Again, assuming all fields in results share this vocabulary
+
+        # Aggregate on the estimated vocab as well
         if self.vocabulary_fields:
-            _vocab = Counter({v: 0 for v in _vocab})
-            for k in results:
-                results[k].update(_vocab)
+            results["_vocab"] = Counter(_vocab)
         yield results, num
 
 
@@ -525,10 +525,11 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
         top_k: Union[int, List[int]],
         other_fields: List[Union[str, int]] = [],
         vocabulary: Optional[List[str]] = None,
+        retain_zeros: bool = False,
     ):
         """
         Population levle top-k metric combiner class.
-        
+
         Args:
             metric_key (str): Name of the metric
             top_k (Union[int, List[int]]): Either integer or a list of integers for top_k
@@ -538,32 +539,40 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
                 but the key is present in vocabulary, the entry is recorded as zero.
                 Conversely, if extra keys exist outside of the vocabulary, the keys are
                 excluded from the calculation. Defaults to None
+            retain_zeros (bool): retain the counter keys with 0 counts when updating with
+                add_inputs or merge_accumulators. Default to False (faster).
         """
         super().__init__()
         self.metric_key = metric_key
         self.top_k = [top_k] if isinstance(top_k, int) else top_k
         self.other_fields = other_fields
         self.vocabulary = vocabulary
+        self.retain_zeros = retain_zeros
 
     def create_accumulator(self) -> Tuple[Dict[int, float], int]:
         # top-k accumulator, count
-        return {k: Counter() for k in self.top_k + self.other_fields}, 0
-       
+        return {
+            k: Counter()
+            for k in self.top_k
+            + self.other_fields
+            + (["_vocab"] if self.vocabulary is None else [])
+        }, 0
+
     def add_input(
         self,
         accumulator: Tuple[Dict[int, Counter], int],
         state: Tuple[Dict[int, Counter], int],
     ) -> Tuple[Dict[int, Counter], int]:
-        if self.vocabulary is not None:
-            metrics = {
-                k: accumulator[0].get(k, Counter()) + state[0][k]
-                for k in state[0]
-            }
-        else: # expecting some fields have zero values
+        if self.retain_zeros:
             metrics = {}
             for k in state[0]:
                 metrics[k] = Counter(accumulator[0].get(k, Counter()))
                 metrics[k].update(state[0][k])
+        else:
+            metrics = {
+                k: accumulator[0].get(k, Counter()) + state[0][k]
+                for k in state[0]
+            }
         n = accumulator[1] + state[1]
         return metrics, n
 
@@ -573,16 +582,16 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
         accumulators = iter(accumulators)
         result = next(accumulators)  # get the first item
         for accumulator in accumulators:
-            if self.vocabulary is not None:
-                metrics = {
-                    k: accumulator[0].get(k, Counter()) + result[0][k]
-                    for k in result[0]
-                }
-            else: # no vocab
+            if self.retain_zeros:
                 metrics = {}
                 for k in accumulator[0]:
                     metrics[k] = Counter(result[0].get(k, Counter()))
                     metrics[k].update(accumulator[0][k])
+            else:
+                metrics = {
+                    k: accumulator[0].get(k, Counter()) + result[0][k]
+                    for k in result[0]
+                }
             n = accumulator[1] + result[1]
             result = (metrics, n)
         return result
@@ -601,20 +610,15 @@ class _CoverageTopKCombiner(PopulationTopKMetricCombiner):
         accumulator, _ = accumulator
         if self.vocabulary:
             vocabulary = list(set(self.vocabulary))
-        else:
-            vocabulary = None
-            
+        else:  # assume the accumulator has all the vocabularies
+            vocabulary = accumulator.pop("_vocab")
+
         # Compute coverage
         coverage = {}
-        for k in self.top_k:
-            covered = [
-                vocab
-                for vocab, count in accumulator[k].items()
-                if count > 0
-            ]
-            if vocabulary is None:
-                vocabulary = accumulator[k].keys()
+        for k in accumulator:
+            covered = accumulator[k].keys()
             coverage[k] = len(covered) / len(vocabulary)
+            # print(k, covered, vocabulary)
         return coverage
 
 
@@ -630,12 +634,24 @@ class CoverageTopK(BaseMetric):
         weight_key: str = None,
         include_labels: bool = True,
         vocabulary: Optional[List[str]] = None,
+        vocabulary_fields: List[str] = [],
     ):
         """
         Args:
-            top_k (Union[int, List[int]]): _description_
-            include_labels (bool, optional): _description_. 
+            top_k (Union[int, List[int]]): Top-k of predictions
+                used to compute coverage.
+            include_labels (bool, optional): Whehter or not
+                to include coverage metric for labels.
                 Defaults to True.
+            vocabulary (List[str]): Explicit list of vocabulary
+                to use when calculating coverage metrics.
+            vocabulary_fields (List[str]): Data feature fields,
+                or "label", or "prediction" that can be used to
+                estimate the list of vocabulary. Ignored when
+                vocabulary is set. Otherwise, either explicitly
+                set the columns or "prediction" will be used
+                to estimate the vocabulary. Note that this is
+                slightly more computationally expensive.
         """
         top_k = [top_k] if isinstance(top_k, int) else top_k
 
@@ -649,6 +665,11 @@ class CoverageTopK(BaseMetric):
                     label_key=label_key,
                     weight_key=weight_key,
                     other_fields=["label"] if include_labels else [],
+                    vocabulary_fields=(
+                        (vocabulary_fields or ["prediction"])
+                        if not vocabulary
+                        else []
+                    ),
                 )
             ],
             combiner=_CoverageTopKCombiner(

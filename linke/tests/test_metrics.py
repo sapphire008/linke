@@ -324,19 +324,22 @@ class TestPopulationTopKMetricPreprocessor:
             "history": [["A"], [], ["B", "C"]],
         }
         result, _ = next(iter(self.preprocessor.process(element)))
-        for k in result:
-            assert not all([a in result[k] for a in list("ABCDEFGH")])
+        assert "_vocab" not in result
 
         result, _ = next(iter(self.preprocessor_vocab.process(element)))
-        for k in result:
-            assert all([a in result[k] for a in list("ABCDEFGH")])
-        print(result)
+        assert "_vocab" in result
 
 
 class TestPopulationTopKMetricCombiner:
     def setup_method(self, method=None):
+        self.combiner_default = PopulationTopKMetricCombiner(
+            metric_key="population_metric_combiner",
+            top_k=[1, 4, 5],
+        )
         self.combiner_no_vocab = PopulationTopKMetricCombiner(
-            metric_key="population_metric_combiner", top_k=[1, 4, 5]
+            metric_key="population_metric_combiner",
+            top_k=[1, 4, 5],
+            retain_zeros=True,
         )
         self.combiner_with_vocab = PopulationTopKMetricCombiner(
             metric_key="population_metric_combiner_with_vocabulary",
@@ -345,6 +348,7 @@ class TestPopulationTopKMetricCombiner:
         )
 
     def test_create_accumulator(self):
+        assert self.combiner_default.vocabulary is None
         assert self.combiner_no_vocab.vocabulary is None
         assert self.combiner_with_vocab.vocabulary is not None
         accumulator, counter = (
@@ -371,7 +375,12 @@ class TestPopulationTopKMetricCombiner:
             5: Counter({"A": 3, "B": 9, "C": 4}),
         }
         num = 2
-        out1, n = self.combiner_with_vocab.add_input(
+        out1, _ = self.combiner_default.add_input(
+            (accumulator, count), (state, num)
+        )
+        assert "B" not in out1[1]
+
+        out2, n = self.combiner_with_vocab.add_input(
             (accumulator, count), (state, num)
         )
         # check results
@@ -379,13 +388,13 @@ class TestPopulationTopKMetricCombiner:
 
         for k in accumulator:
             # print(out1[k], accumulator[k], state[k])
-            assert out1[k] == accumulator[k] + state[k]
+            assert out2[k] == accumulator[k] + state[k]
 
-        out2, _ = self.combiner_no_vocab.add_input(
+        out3, _ = self.combiner_no_vocab.add_input(
             (accumulator, count), (state, num)
         )
         # all keys includig zero keys are present
-        assert all([key in out2[1] for key in ["A", "B", "C"]])
+        assert all([key in out3[1] for key in ["A", "B", "C"]])
 
     def test_merge_accumulators(self):
         accumulator1 = (
@@ -413,27 +422,32 @@ class TestPopulationTopKMetricCombiner:
             1,
         )
         accumulators = [accumulator1, accumulator2, accumulator3]
-        out, count = self.combiner_with_vocab.merge_accumulators(
+        out, count = self.combiner_default.merge_accumulators(
             accumulators
         )
+        assert "D" not in out[1]
 
         total = 0  # total count after merge
         for _, c in accumulators:
             total += c
         assert total == count
 
-        for k in out:
-            combined = Counter()  # combined metric
-            for acc, _ in accumulators:
-                combined = combined + acc[k]
-            assert combined == out[k]
-        assert "D" not in out[1]
-
         # When no vocab is present
         out2, _ = self.combiner_no_vocab.merge_accumulators(
             accumulators
         )
         assert "D" in out2[1] and out2[1]["D"] == 0
+
+        out3, _ = self.combiner_with_vocab.merge_accumulators(
+            accumulators
+        )
+
+        for k in out3:
+            combined = Counter()  # combined metric
+            for acc, _ in accumulators:
+                combined = combined + acc[k]
+            assert combined == out3[k]
+        assert "D" not in out3[1]
 
     def test_extract_output(self):
         accumulator = {
@@ -449,38 +463,26 @@ class TestPopulationTopKMetricCombiner:
         assert count == num
 
 
-@pytest.mark.skip(reason="")
-class TestCoverageMetric:
+# @pytest.mark.skip(reason="")
+class TestCoverageTopK:
     def setup_method(self, method=None):
         self.metric = CoverageTopK(
             top_k=[1, 4, 5],
             include_labels=True,
             vocabulary=None,
+            # estimate vocabulary using "prediction"
         )
         self.metric_vocabulary = CoverageTopK(
             top_k=[1, 4, 5],
             include_labels=True,
             vocabulary=["A", "B", "C", "D", "E", "F"],
         )
-
-    def test_specs(self):
-        assert isinstance(self.metric.combiner, _CoverageTopKCombiner)
-        assert len(self.metric.preprocessors) == 1
-        assert isinstance(
-            self.metric.preprocessors[0],
-            PopulationTopKMetricPreprocessor,
-        )
-
-    def test_metric(self):
-        processor = self.metric.preprocessors[0]
-        combiner = self.metric.combiner
-        # Binary case
-        element = {
+        self.element = {
             DEFAULT_PREDICTION_KEY: np.array(
                 [
                     ["A", "B", "C", "D", "E"],
-                    ["D", "A", "C", "B", "E"],
-                    ["E", "B", "A", "C", "D"],
+                    ["D", "A", "B", "C", "E"],
+                    ["A", "C", "B", "D", "E"],
                 ]
             ),
             DEFAULT_LABEL_KEY: [
@@ -490,26 +492,78 @@ class TestCoverageMetric:
             ],
         }
 
+    def test_specs(self):
+        assert isinstance(self.metric.combiner, _CoverageTopKCombiner)
+        assert len(self.metric.preprocessors) == 1
+        assert isinstance(
+            self.metric.preprocessors[0],
+            PopulationTopKMetricPreprocessor,
+        )
+        # By default if no vocab is specified, "prediction"
+        # is used to estimate vocabulary
+        assert self.metric.combiner.vocabulary is None
+        vocab_estimate = self.metric.preprocessors[0].vocabulary_fields
+        assert len(vocab_estimate) == 1
+        assert vocab_estimate[0] == "prediction"
+
+        assert self.metric_vocabulary.combiner.vocabulary is not None
+
+    def test_metric(self):
+        processor = self.metric.preprocessors[0]
+        combiner = self.metric.combiner
+
         # Check preprocessor
-        out_metrics, out_num = next(iter(processor.process(element)))
+        out_metrics, out_num = next(
+            iter(processor.process(self.element))
+        )
         # Check num elements expected
-        assert out_num == len(element[DEFAULT_LABEL_KEY])
+        assert out_num == len(self.element[DEFAULT_LABEL_KEY])
         for k in out_metrics:
-            if k == "label":
-                expected = Counter(sum(element[DEFAULT_LABEL_KEY], []))
+            if k == "_vocab":
+                assert len(out_metrics[k]) == 5
+                continue
+            elif k == "label":
+                expected = Counter(
+                    sum(self.element[DEFAULT_LABEL_KEY], [])
+                )
             else:
                 expected = Counter(
-                    element[DEFAULT_PREDICTION_KEY][:, :k].ravel()
+                    self.element[DEFAULT_PREDICTION_KEY][:, :k].ravel()
                 )
 
             assert expected == out_metrics[k]
 
         # Check combiner
         output = combiner.extract_output((out_metrics, out_num))
-        set_trace()
+        expected = {1: 0.4, 4: 0.8, 5: 1.0, "label": 1.2}
+        assert output == expected
 
     def test_metric_vocabulary(self):
-        pass
+        processor = self.metric_vocabulary.preprocessors[0]
+        combiner = self.metric_vocabulary.combiner
 
-    def test_metric_constraint(self):
-        pass
+        # Check preprocessor
+        out_metrics, out_num = next(
+            iter(processor.process(self.element))
+        )
+        # Check num elements expected
+        assert out_num == len(self.element[DEFAULT_LABEL_KEY])
+        assert "_vocab" not in out_metrics
+        for k in out_metrics:
+            if k == "label":
+                expected = Counter(
+                    sum(self.element[DEFAULT_LABEL_KEY], [])
+                )
+            else:
+                expected = Counter(
+                    self.element[DEFAULT_PREDICTION_KEY][:, :k].ravel()
+                )
+
+            assert expected == out_metrics[k]
+
+        # Check combiner
+        output = combiner.extract_output((out_metrics, out_num))
+        expected = {1: 2 / 6, 4: 4 / 6, 5: 5 / 6, "label": 1.0}
+        assert all(
+            [np.allclose(output[k], expected[k]) for k in output]
+        )
