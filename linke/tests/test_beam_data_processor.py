@@ -5,12 +5,10 @@ import os
 import tempfile
 import shutil
 import gzip
-from typing import NamedTuple, List
 import pytest
 import numpy as np
 import pandas as pd
 from apache_beam.io.tfrecordio import _TFRecordUtil
-from apache_beam.io.parquetio import _ParquetUtils
 from apache_beam.coders import BytesCoder
 from linke.runner.local_runner import LocalPipelineRunner
 # fmt: off
@@ -31,7 +29,6 @@ from linke.dataset.beam_data_processor.utils import (
 from pdb import set_trace
 
 
-@pytest.mark.skip(reason="Skip for now during development")
 def test_csv_reader_writer():
     input_file = "linke/tests/data/input.csv"
     processing_fn = (
@@ -68,7 +65,6 @@ def test_csv_reader_writer():
         ), "Expecting same number of outputs as inputs"
 
 
-@pytest.mark.skip(reason="Skip for now during development")
 def test_beam_data_processing_single_component():
     """No input/output artifacts. Just static files linked"""
     input_file = "linke/tests/data/input.csv"
@@ -78,8 +74,8 @@ def test_beam_data_processing_single_component():
         # output_file = os.path.join(temp_dir, "output")
         # make payload
         payload = {
-            "processing_fn": "linke.tests.conftest.processing_fn",
-            "init_fn": "linke.tests.conftest.init_fn",
+            "processing_fn": "linke.tests.conftest.csv_processing_fn",
+            "init_fn": "linke.tests.conftest.csv_init_fn",
             "input_data": CsvInputData(
                 file=input_file, batch_size=2
             ).as_dict(),
@@ -100,11 +96,10 @@ def test_beam_data_processing_single_component():
         shutil.rmtree(task.output.uri)  # clean up
 
 
-@pytest.mark.skip(reason="Skip for now during development")
 def test_bigquery_output_data():
     # Two modes of specifying BigQuery Output
     output_data1 = BigQueryOutputData(
-        "nfa-core-prod.public.videos",
+        "project_id.dataset.table",
         schema=[
             BigQuerySchemaField(
                 name="id",
@@ -118,7 +113,7 @@ def test_bigquery_output_data():
         ],
     )
     output_data2 = BigQueryOutputData(
-        "nfa-core-prod.public.videos",
+        "project_id.dataset.table",
         schema=[
             {
                 "name": "id",
@@ -141,17 +136,17 @@ def test_bigquery_output_data():
     )
 
 
-@pytest.mark.skip(reason="Skip for now during development")
+# @pytest.mark.skip(reason="Skip for now during development")
 def test_bigquery_reader_writer():
+    """To Run this test, set up is needed on a Google Cloud project.
+    * Create the table using the sql from data/input_bq.sql
+    * Create a storage bucket for temp data writes
+    * Run `gcloud auth application-default login` if running locally
+    """
     query = """
-    SELECT * EXCEPT(row_id) 
-    FROM (
-        SELECT id, title, tags, 
-            ROW_NUMBER() OVER(PARTITION BY id) AS row_id
-        FROM `nfa-core-prod.public.videos`
+        SELECT id, title, tags
+        FROM `rinoa-core-prod.public.videos`
         WHERE age_rating = "mpa:pg-13"
-    )
-    WHERE row_id = 1
     """
     # Make sure this schema is in the same order as the output from the processing_fn
     schema = [
@@ -167,20 +162,19 @@ def test_bigquery_reader_writer():
     beam_data_processing_fn(
         input_data=BigQueryInputData(sql=query, batch_size=3),
         output_data=BigQueryOutputData(
-            output_table="nfa-core-prod.temp_dataset.test_beam_writer",
+            output_table="rinoa-core-prod.temp_dataset.test_beam_writer",
             schema=schema,
         ),
         processing_fn="linke.tests.conftest.bq_processing_fn",
         init_fn="linke.tests.conftest.csv_init_fn",
         beam_pipeline_args=[
             "--runner=DirectRunner",
-            "--temp_location=gs://ml-pipeline-runs/bigquery",
-            "--project=nfa-core-prod",
+            "--temp_location=gs://rinoa-core-prod-ml-pipelines/bigquery",
+            "--project=rinoa-core-prod",
         ],
     )
 
 
-# @pytest.mark.skip(reason="Skip for now during development")
 def test_tfrecord_reader_writer():
     input_file = "linke/tests/data/input.tfrecord"
     processing_fn = (
@@ -237,7 +231,6 @@ def test_tfrecord_reader_writer():
         assert counter == 34, "Expecting 34 records"
 
 
-@pytest.mark.skip(reason="Skip for now during development")
 def test_parquet_reader_writer():
     input_file = "linke/tests/data/input.parquet"
     processing_fn = (
