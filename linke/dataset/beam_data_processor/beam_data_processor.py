@@ -32,7 +32,7 @@ from apache_beam.io.gcp.bigquery import (
 from apache_beam.io.tfrecordio import ReadFromTFRecord, WriteToTFRecord
 from apache_beam.io.parquetio import ReadFromParquet, WriteToParquet
 
-from kubeflow_components.dataset.beam_data_processor.utils import (
+from linke.dataset.beam_data_processor.utils import (
     TFRecordIOUtils,
 )
 

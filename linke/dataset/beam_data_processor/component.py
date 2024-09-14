@@ -19,7 +19,7 @@ def beam_data_processing_component(
     """Beam data processing Kubeflow component."""
     # Importing all the helper functions
     import os
-    from kubeflow_components.dataset.beam_data_processor.beam_data_processor import (
+    from linke.dataset.beam_data_processor.beam_data_processor import (
         beam_data_processing_fn,
         BaseData,
     )

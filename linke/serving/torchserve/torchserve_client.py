@@ -7,7 +7,7 @@ import grpc
 from urllib.parse import urlencode
 
 # Importing protobuf
-from kubeflow_components.serving.torchserve.proto import (
+from linke.serving.torchserve.proto import (
     inference_pb2_grpc,
     inference_pb2,
     management_pb2_grpc,

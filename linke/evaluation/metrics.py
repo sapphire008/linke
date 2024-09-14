@@ -745,3 +745,9 @@ class RedundacyTopK(BaseMetric):
         )
 
 # %% Approximate Count Metrics
+class ApproximateUniqueCountCombiner:
+    """
+    Approximate distinct count combiner for 
+    personalized recommendation patterns.
+    """
+    pass

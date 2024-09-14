@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Union, Callable, Type, Iterable, Literal
 import apache_beam as beam
+from apache_beam.options.pipeline_options import PipelineOptions
 from linke.dataset.beam_data_processor.beam_data_processor import (
     BaseInputData,
 )
@@ -89,6 +90,13 @@ class EvalConfig:
         self.metrics = metrics
         self.data = data
         self.baseline_model = baseline_model
+    
+    @classmethod
+    def from_json(cls):
+        pass
+    
+    def to_json(self):
+        pass
 
 
 # %% Metric writer
@@ -113,3 +121,24 @@ class ModelInference(beam.PTransform):
 
     def expand(self, pcoll):
         return pcoll
+
+
+# %% Evaluation pipeline
+def create_evaluation_pipeline(
+    eval_config: EvalConfig,
+    beam_pipeline_args: List[str] = ["--runner=DirectRunner"],
+):
+    options = PipelineOptions(flags=beam_pipeline_args)
+    
+    # Metrics
+    metric_configs = []
+    for metric in eval_config.metrics:
+        pass
+    
+    # Create beam pipeline
+    with beam.Pipeline(options=options) as p:
+        # Read from data source
+        pass
+        # Make model inference
+        
+        # Compute and combine metrics at different level
