@@ -1,6 +1,6 @@
 [tool.poetry]
-name = "kubeflow-components"
-version = "0.1.0"
+name = "linke"
+version = "0.1.1"
 description = ""
 authors = ["sapphire008 <cui23327@gmail.com>"]
 license = "MIT"

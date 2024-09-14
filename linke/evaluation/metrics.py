@@ -436,7 +436,16 @@ class NDCGTopK(BaseMetric):
 
 class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
     """Accumulate a Counter for categories/tokens in the predicion,
-    along with other fields in the inputs."""
+    along with other fields in the inputs.
+    
+    - other_fields: additional fields to accumulate the values on.
+        Assuming this field/feature shares the same vocabulary set
+        as the prediction.
+    - vocabulary_fields: use a list of "{feature_name}" or "label", 
+        "prediction" to estimate the overall vocabulary as we iterate
+        through the data. This is helpful when we do not know the
+        vocabulary beforehand.
+    """
 
     def __init__(
         self,
@@ -446,6 +455,7 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
         label_key: str = DEFAULT_LABEL_KEY,
         weight_key: str = None,
         other_fields: List[str] = [],
+        vocabulary_fields: List[str] = [],
     ):
         super(PopulationTopKMetricPreprocessor, self).__init__(
             top_k=top_k,
@@ -455,17 +465,26 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
             weight_key=weight_key,
         )
         # Additional field for accumulation
+        # the field shares the vocabulary set of the prediction
+        # such as content interaction history feature
         self.other_fields = other_fields
+        # If specified, use these fields to estimate the
+        # vocabulary of the metric. Values can be
+        # "label", "prediction", or "{feature_name}"
+        self.vocabulary_fields = vocabulary_fields
 
     def process(
         self, element: Dict[str, Any]
     ) -> Generator[Tuple[Dict, int], None, None]:
-        results = {}
+        results, _vocab = {}, set()
         y_pred: np.ndarray = element[self.prediction_key]
+        if "prediction" in self.vocabulary_fields:
+            _vocab.update(set(y_pred.ravel()))
+        num = y_pred.shape[0]
         for k in self.top_k:
             results[k] = Counter(y_pred[:, :k].ravel())
         # Additional fields for accumulation
-        if "label" in self.other_fields:
+        if "label" in self.other_fields or "label" in self.vocabulary_fields:
             y_label: Union[np.ndarray, sparray, List[List]] = (
                 element[self.label_key]
                 if self.label_key in element
@@ -473,17 +492,29 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
                 else element[self.feature_key][self.label_key]
             )
             y_label = self.flatten_array(y_label)
-            results["label"] = Counter(y_label)
+            if "label" in self.other_fields:
+                results["label"] = Counter(y_label)
+            if "label" in self.vocabulary_fields:
+                _vocab.update(set(y_label))
         # Additional fields from features
-        for field in self.other_fields:
+        for field in set(self.other_fields + self.vocabulary_fields):
             if field == "label":
                 continue  # skip label
             if field not in element.get(self.feature_key, {}):
                 continue  # skip non-existent keys
             feature = element[self.feature_key][field]
             feature = self.flatten_array(feature)
-            results[field] = Counter(feature)
-        num = y_pred.shape[0]
+            if field in self.other_fields:
+                results[field] = Counter(feature)
+            if field in self.vocabulary_fields:
+                _vocab.update(set(feature))
+        
+        # Use the estimated vocab for keys of the Counter result
+        # Again, assuming all fields in results share this vocabulary
+        if self.vocabulary_fields:
+            _vocab = Counter({v: 0 for v in _vocab})
+            for k in results:
+                results[k].update(_vocab)
         yield results, num
 
 
@@ -492,67 +523,47 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
         self,
         metric_key: str,
         top_k: Union[int, List[int]],
+        other_fields: List[Union[str, int]] = [],
         vocabulary: Optional[List[str]] = None,
-        constrain_accumulation: bool = False,
     ):
-        """_summary_
-
+        """
+        Population levle top-k metric combiner class.
+        
         Args:
             metric_key (str): Name of the metric
             top_k (Union[int, List[int]]): Either integer or a list of integers for top_k
                 metric calculation
             vocabulary (List[str], optional): A list of vocabulary for the counted class.
-                When not None and constrain_accumulation is True,
-                limit the counter to the list vocabulary provided during accumulation
-                (exchange time for space, i.e. reduce memory, increase computational cost).
-                  - If the count for a specific value/token is missing, a 0 count is retained.
-                  - If extra values/tokens are present, then token will be ignored.
-                When vocabulary is not None but constraint_accumulatino is False,
-                vocabulary of the accumulated counter is not constrained.
-                When None, use all the accumulated vocabularies uncontrained.
-                Defaults to None.
-            constraint_accumulation (bool): constrain to the vocabulary during
-                the accumulatino process. See vocabulary. Default to False.
+                When computing certain metrics, if the key is missing from the counter,
+                but the key is present in vocabulary, the entry is recorded as zero.
+                Conversely, if extra keys exist outside of the vocabulary, the keys are
+                excluded from the calculation. Defaults to None
         """
         super().__init__()
         self.metric_key = metric_key
         self.top_k = [top_k] if isinstance(top_k, int) else top_k
-        # vocabulary constrained combiner
-        if vocabulary is not None and constrain_accumulation:
-            self.constraint = Counter({v: 0 for v in vocabulary})
-            self.vocabulary = None
-        else:
-            self.constraint = None
-            self.vocabulary = vocabulary
+        self.other_fields = other_fields
+        self.vocabulary = vocabulary
 
     def create_accumulator(self) -> Tuple[Dict[int, float], int]:
         # top-k accumulator, count
-        if self.constraint is None:
-            return {k: Counter() for k in self.top_k}, 0
-        else:
-            return {k: self.constraint.copy() for k in self.top_k}, 0
-
+        return {k: Counter() for k in self.top_k + self.other_fields}, 0
+       
     def add_input(
         self,
         accumulator: Tuple[Dict[int, Counter], int],
         state: Tuple[Dict[int, Counter], int],
     ) -> Tuple[Dict[int, Counter], int]:
-        if self.constraint is None:
+        if self.vocabulary is not None:
             metrics = {
                 k: accumulator[0].get(k, Counter()) + state[0][k]
                 for k in state[0]
             }
-        else:
-            # Remove any extra keys in the state, retain any 0 counts
+        else: # expecting some fields have zero values
             metrics = {}
             for k in state[0]:
-                acc = accumulator[0].get(k, self.constraint.copy())
-                metrics[k] = Counter(
-                    {
-                        vv: acc[vv] + state[0][k].get(vv, 0)
-                        for vv in self.constraint
-                    }
-                )
+                metrics[k] = Counter(accumulator[0].get(k, Counter()))
+                metrics[k].update(state[0][k])
         n = accumulator[1] + state[1]
         return metrics, n
 
@@ -562,20 +573,16 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
         accumulators = iter(accumulators)
         result = next(accumulators)  # get the first item
         for accumulator in accumulators:
-            if self.constraint is None:
+            if self.vocabulary is not None:
                 metrics = {
                     k: accumulator[0].get(k, Counter()) + result[0][k]
                     for k in result[0]
                 }
-            else:
+            else: # no vocab
                 metrics = {}
                 for k in accumulator[0]:
-                    acc = result[0].get(k, self.constraint.copy())
-                    value = {
-                        vv: acc[vv] + accumulator[0][k].get(vv, 0)
-                        for vv in self.constraint
-                    }
-                    metrics[k] = Counter(value)
+                    metrics[k] = Counter(result[0].get(k, Counter()))
+                    metrics[k].update(accumulator[0][k])
             n = accumulator[1] + result[1]
             result = (metrics, n)
         return result
@@ -583,21 +590,20 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
     def extract_output(
         self, accumulator: Tuple[Dict[int, float], int]
     ) -> Dict[int, float]:
+        """Needs to be implemented for specific metrics."""
         return accumulator
 
 
-class _CoverageTopKCominer(PopulationTopKMetricCombiner):
+class _CoverageTopKCombiner(PopulationTopKMetricCombiner):
     def extract_output(
         self, accumulator: Tuple[Dict[int, float], int]
     ) -> Dict[int, float]:
         accumulator, _ = accumulator
-        if self.constraint:
-            vocabulary = list(self.constraint.keys())
-        elif self.vocabulary:
+        if self.vocabulary:
             vocabulary = list(set(self.vocabulary))
         else:
             vocabulary = None
-
+            
         # Compute coverage
         coverage = {}
         for k in self.top_k:
@@ -624,7 +630,6 @@ class CoverageTopK(BaseMetric):
         weight_key: str = None,
         include_labels: bool = True,
         vocabulary: Optional[List[str]] = None,
-        constrain_accumulation: bool = False,
     ):
         """
         Args:
@@ -646,11 +651,10 @@ class CoverageTopK(BaseMetric):
                     other_fields=["label"] if include_labels else [],
                 )
             ],
-            combiner=_CoverageTopKCominer(
+            combiner=_CoverageTopKCombiner(
                 metric_key="coverage",
                 top_k=top_k,
                 vocabulary=vocabulary,
-                constrain_accumulation=constrain_accumulation,
             ),
         )
 

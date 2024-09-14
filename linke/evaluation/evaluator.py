@@ -2,10 +2,10 @@ import json
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Union, Callable, Type, Iterable, Literal
 import apache_beam as beam
-from kubeflow_components.dataset.beam_data_processor.beam_data_processor import (
+from linke.dataset.beam_data_processor.beam_data_processor import (
     BaseInputData,
 )
-from kubeflow_components.evaluation.metrics import BaseMetric
+from linke.evaluation.metrics import BaseMetric
 
 
 # %% TFMA-like Model Eval without Protobuf

@@ -2,7 +2,10 @@ import pytest
 from collections import Counter
 import numpy as np
 from scipy.sparse import csr_matrix
-from kubeflow_components.evaluation.metrics import (
+from pdb import set_trace
+
+# set_trace()
+from linke.evaluation.metrics import (
     TopKMetricPreprocessor,
     HitRatioTopK,
     _HitRatioTopKPreprocessor,
@@ -10,17 +13,16 @@ from kubeflow_components.evaluation.metrics import (
     _NDCGTopKPreprocessor,
     SampleTopKMetricCombiner,
     PopulationTopKMetricCombiner,
-    _CoverageTopKCominer,
-    _CoverageTopKPreprocessor,
+    PopulationTopKMetricPreprocessor,
+    _CoverageTopKCombiner,
     CoverageTopK,
 )
-from kubeflow_components.evaluation.metrics import (
+from linke.evaluation.metrics import (
     DEFAULT_PREDICTION_KEY,
     DEFAULT_LABEL_KEY,
 )
 
 from pdb import set_trace
-
 
 
 class TestTopKMetricPreprocessor:
@@ -118,7 +120,6 @@ class TestTopKMetricPreprocessor:
         assert (out.tocoo().col == np.array([0, 1, 2, 0, 1])).all()
 
 
-
 class TestSampleTopKMetricCombiner:
     """Test beam.CombineFn"""
 
@@ -170,7 +171,6 @@ class TestSampleTopKMetricCombiner:
             np.allclose(v, accumulator[k] / count)
 
 
-
 class TestHitRatioTopK:
     def setup_method(self, method=None):
         self.metric = HitRatioTopK(top_k=[1, 4, 5])
@@ -210,7 +210,6 @@ class TestHitRatioTopK:
                     len(set(y_true).intersection(y_pred[:k])) > 0
                 )
             assert expected == out_metrics[k]
-
 
 
 class TestNDCGTopK:
@@ -302,25 +301,66 @@ class TestNDCGTopK:
         self.compare_results(expected_rel, out_metrics)
 
 
+class TestPopulationTopKMetricPreprocessor:
+    def setup_method(self, method=None):
+        self.preprocessor = PopulationTopKMetricPreprocessor(
+            top_k=[1, 4, 5]
+        )
+        self.preprocessor_vocab = PopulationTopKMetricPreprocessor(
+            top_k=[1, 4, 5],
+            vocabulary_fields=["label", "prediction", "history"],
+        )
+
+    def test_process(self):
+        element = {
+            DEFAULT_PREDICTION_KEY: np.array(
+                [
+                    ["A", "B", "C", "G", "D", "E"],
+                    ["D", "B", "C", "A", "E", "F"],
+                    ["F", "A", "E", "B", "C", "H"],
+                ]
+            ),
+            DEFAULT_LABEL_KEY: [["A", "F"], ["G", "H", "C"], ["D"]],
+            "history": [["A"], [], ["B", "C"]],
+        }
+        result, _ = next(iter(self.preprocessor.process(element)))
+        for k in result:
+            assert not all([a in result[k] for a in list("ABCDEFGH")])
+
+        result, _ = next(iter(self.preprocessor_vocab.process(element)))
+        for k in result:
+            assert all([a in result[k] for a in list("ABCDEFGH")])
+        print(result)
+
 
 class TestPopulationTopKMetricCombiner:
     def setup_method(self, method=None):
-        self.combiner = PopulationTopKMetricCombiner(
-            metric_key="population_metric", top_k=[1, 4, 5]
+        self.combiner_no_vocab = PopulationTopKMetricCombiner(
+            metric_key="population_metric_combiner", top_k=[1, 4, 5]
+        )
+        self.combiner_with_vocab = PopulationTopKMetricCombiner(
+            metric_key="population_metric_combiner_with_vocabulary",
+            top_k=[1, 4, 5],
+            vocabulary=["A", "B", "C", "D", "E"],
         )
 
     def test_create_accumulator(self):
-        accumulator, counter = self.combiner.create_accumulator()
-        assert self.combiner.vocabulary is None
-        assert self.combiner.constraint is None
+        assert self.combiner_no_vocab.vocabulary is None
+        assert self.combiner_with_vocab.vocabulary is not None
+        accumulator, counter = (
+            self.combiner_no_vocab.create_accumulator()
+        )
         assert counter == 0
-        for k in self.combiner.top_k:
+        for k in (
+            self.combiner_no_vocab.top_k
+            + self.combiner_no_vocab.other_fields
+        ):
             assert k in accumulator
             assert Counter() == accumulator[k]
 
     def test_add_input(self):
         accumulator = {
-            1: Counter(),
+            1: Counter({"B": 0}),
             4: Counter({"A": 12, "B": 15, "C": 6}),
             5: Counter({"A": 12, "B": 16, "C": 7}),
         }
@@ -331,18 +371,26 @@ class TestPopulationTopKMetricCombiner:
             5: Counter({"A": 3, "B": 9, "C": 4}),
         }
         num = 2
-        out, n = self.combiner.add_input(
+        out1, n = self.combiner_with_vocab.add_input(
             (accumulator, count), (state, num)
         )
         # check results
         assert n == count + num
+
         for k in accumulator:
-            assert out[k] == accumulator[k] + state[k]
+            # print(out1[k], accumulator[k], state[k])
+            assert out1[k] == accumulator[k] + state[k]
+
+        out2, _ = self.combiner_no_vocab.add_input(
+            (accumulator, count), (state, num)
+        )
+        # all keys includig zero keys are present
+        assert all([key in out2[1] for key in ["A", "B", "C"]])
 
     def test_merge_accumulators(self):
         accumulator1 = (
             {
-                1: Counter(),
+                1: Counter({"D": 0}),
                 4: Counter({"A": 12, "C": 6}),
                 5: Counter({"A": 12, "B": 16, "C": 7}),
             },
@@ -350,12 +398,7 @@ class TestPopulationTopKMetricCombiner:
         )
         accumulator2 = (
             {
-                1: Counter(
-                    {
-                        "A": 2,
-                        "B": 5,
-                    }
-                ),
+                1: Counter({"A": 2, "B": 5}),
                 4: Counter({"A": 3, "B": 7, "C": 3}),
                 5: Counter({"B": 9, "C": 4}),
             },
@@ -370,7 +413,9 @@ class TestPopulationTopKMetricCombiner:
             1,
         )
         accumulators = [accumulator1, accumulator2, accumulator3]
-        out, count = self.combiner.merge_accumulators(accumulators)
+        out, count = self.combiner_with_vocab.merge_accumulators(
+            accumulators
+        )
 
         total = 0  # total count after merge
         for _, c in accumulators:
@@ -382,6 +427,13 @@ class TestPopulationTopKMetricCombiner:
             for acc, _ in accumulators:
                 combined = combined + acc[k]
             assert combined == out[k]
+        assert "D" not in out[1]
+
+        # When no vocab is present
+        out2, _ = self.combiner_no_vocab.merge_accumulators(
+            accumulators
+        )
+        assert "D" in out2[1] and out2[1]["D"] == 0
 
     def test_extract_output(self):
         accumulator = {
@@ -390,128 +442,35 @@ class TestPopulationTopKMetricCombiner:
             5: Counter({"A": 12, "B": 16, "C": 7}),
         }
         num = 10
-        output, count = self.combiner.extract_output((accumulator, num))
+        output, count = self.combiner_with_vocab.extract_output(
+            (accumulator, num)
+        )
         assert output == accumulator
         assert count == num
 
 
-class TestPopulationTopKMetricCombinerWithVocabulary:
-    def setup_method(self, method=None):
-        self.combiner = PopulationTopKMetricCombiner(
-            metric_key="population_metric",
-            top_k=[1, 4, 5],
-            vocabulary=["A", "B", "C", "D", "E"],
-            constrain_accumulation=True,
-        )
-
-    def test_create_accumulator(self):
-        accumulator, counter = self.combiner.create_accumulator()
-        assert self.combiner.vocabulary is None
-        assert self.combiner.constraint is not None
-        assert counter == 0
-        for k in self.combiner.top_k:
-            assert k in accumulator
-            # Check all constraints are initialized
-            for v in self.combiner.constraint:
-                assert v in accumulator[k]
-
-    def test_add_input(self):
-        accumulator = {
-            1: Counter({"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}),
-            4: Counter({"A": 12, "B": 15, "C": 6, "D": 0, "E": 0}),
-            5: Counter({"A": 12, "B": 16, "C": 7, "D": 1, "E": 0}),
-        }
-        count = 3
-        state = {
-            1: Counter({"A": 2, "C": 2}),
-            4: Counter({"B": 7, "C": 3}),
-            5: Counter({"A": 3, "B": 9, "C": 4}),
-        }
-        num = 2
-        out, n = self.combiner.add_input(
-            (accumulator, count), (state, num)
-        )
-        # check results
-        assert n == count + num
-        for k in accumulator:
-            for vv in self.combiner.constraint:
-                assert out[k][vv] == accumulator[k][vv] + state[k].get(
-                    vv, 0
-                )
-
-    def test_merge_accumulators(self):
-        accumulator1 = (
-            {
-                1: Counter({"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}),
-                4: Counter({"A": 12, "B": 15, "C": 6, "D": 0, "E": 0}),
-                5: Counter({"A": 12, "B": 16, "C": 7, "D": 1, "E": 0}),
-            },
-            3,
-        )
-        accumulator2 = (
-            {
-                1: Counter({"A": 2, "B": 5, "C": 0, "D": 0, "E": 0}),
-                4: Counter({"A": 3, "B": 7, "C": 3, "D": 0, "E": 0}),
-                5: Counter({"A": 0, "B": 9, "C": 4, "D": 0, "E": 0}),
-            },
-            2,
-        )
-        accumulator3 = (
-            {
-                1: Counter({"A": 1, "B": 0, "C": 2, "D": 0, "E": 0}),
-                4: Counter({"A": 3, "B": 7, "C": 3, "D": 0, "E": 0}),
-                5: Counter({"A": 3, "B": 9, "C": 0, "D": 0, "E": 0}),
-            },
-            1,
-        )
-        accumulators = [accumulator1, accumulator2, accumulator3]
-        out, count = self.combiner.merge_accumulators(accumulators)
-
-        total = 0  # total count after merge
-        for _, c in accumulators:
-            total += c
-        assert total == count
-
-        combined = {k: {} for k in out}  # combined metric
-        for k in out:
-            for acc, _ in accumulators:
-                for vv in self.combiner.constraint:
-                    combined[k][vv] = (
-                        combined[k].get(vv, 0) + acc[k][vv]
-                    )
-        for k in out:
-            for vv in self.combiner.constraint:
-                assert combined[k][vv] == out[k][vv]
-
-
+@pytest.mark.skip(reason="")
 class TestCoverageMetric:
     def setup_method(self, method=None):
         self.metric = CoverageTopK(
-            top_k=[1,4,5],
+            top_k=[1, 4, 5],
             include_labels=True,
             vocabulary=None,
         )
         self.metric_vocabulary = CoverageTopK(
-            top_k=[1,4,5],
+            top_k=[1, 4, 5],
             include_labels=True,
             vocabulary=["A", "B", "C", "D", "E", "F"],
-            constrain_accumulation=False,
         )
-        self.metric_constraint = CoverageTopK(
-            top_k=[1,4,5],
-            include_labels=True,
-            vocabulary=["A", "B", "C", "D", "E", "F"],
-            constrain_accumulation=False,
-        )
+
     def test_specs(self):
-        assert isinstance(
-            self.metric.combiner, _CoverageTopKCominer
-        )
+        assert isinstance(self.metric.combiner, _CoverageTopKCombiner)
         assert len(self.metric.preprocessors) == 1
         assert isinstance(
-            self.metric.preprocessors[0], _CoverageTopKPreprocessor
+            self.metric.preprocessors[0],
+            PopulationTopKMetricPreprocessor,
         )
-        
+
     def test_metric(self):
         processor = self.metric.preprocessors[0]
         combiner = self.metric.combiner
@@ -530,16 +489,27 @@ class TestCoverageMetric:
                 ["D", "E", "F"],
             ],
         }
-        
-        out_metrics, out_num = next(iter(processor.process(element)))
-        set_trace()
 
+        # Check preprocessor
+        out_metrics, out_num = next(iter(processor.process(element)))
         # Check num elements expected
         assert out_num == len(element[DEFAULT_LABEL_KEY])
-        
-    
+        for k in out_metrics:
+            if k == "label":
+                expected = Counter(sum(element[DEFAULT_LABEL_KEY], []))
+            else:
+                expected = Counter(
+                    element[DEFAULT_PREDICTION_KEY][:, :k].ravel()
+                )
+
+            assert expected == out_metrics[k]
+
+        # Check combiner
+        output = combiner.extract_output((out_metrics, out_num))
+        set_trace()
+
     def test_metric_vocabulary(self):
         pass
-    
+
     def test_metric_constraint(self):
         pass

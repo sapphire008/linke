@@ -12,9 +12,9 @@ import pandas as pd
 from apache_beam.io.tfrecordio import _TFRecordUtil
 from apache_beam.io.parquetio import _ParquetUtils
 from apache_beam.coders import BytesCoder
-from kubeflow_components.runner.local_runner import LocalPipelineRunner
+from linke.runner.local_runner import LocalPipelineRunner
 # fmt: off
-from kubeflow_components.dataset.beam_data_processor.beam_data_processor import (
+from linke.dataset.beam_data_processor.beam_data_processor import (
     beam_data_processing_fn,
     CsvInputData, CsvOutputData,
     BigQueryInputData, BigQuerySchemaField, BigQueryOutputData,
@@ -22,10 +22,10 @@ from kubeflow_components.dataset.beam_data_processor.beam_data_processor import 
     ParquetSchemaField, ParquetInputData, ParquetOutputData,
 )
 # fmt: on
-from kubeflow_components.dataset.beam_data_processor.component import (
+from linke.dataset.beam_data_processor.component import (
     beam_data_processing_component,
 )
-from kubeflow_components.dataset.beam_data_processor.utils import (
+from linke.dataset.beam_data_processor.utils import (
     TFRecordIOUtils,
 )
 from pdb import set_trace
@@ -33,11 +33,11 @@ from pdb import set_trace
 
 @pytest.mark.skip(reason="Skip for now during development")
 def test_csv_reader_writer():
-    input_file = "kubeflow_components/tests/data/input.csv"
+    input_file = "linke/tests/data/input.csv"
     processing_fn = (
-        "kubeflow_components.tests.conftest.csv_processing_fn"
+        "linke.tests.conftest.csv_processing_fn"
     )
-    init_fn = "kubeflow_components.tests.conftest.csv_init_fn"
+    init_fn = "linke.tests.conftest.csv_init_fn"
 
     with tempfile.TemporaryDirectory() as temp_dir:
         output_file = os.path.join(temp_dir, "output")
@@ -71,15 +71,15 @@ def test_csv_reader_writer():
 @pytest.mark.skip(reason="Skip for now during development")
 def test_beam_data_processing_single_component():
     """No input/output artifacts. Just static files linked"""
-    input_file = "kubeflow_components/tests/data/input.csv"
+    input_file = "linke/tests/data/input.csv"
     # Initialize the runner
     runner = LocalPipelineRunner(runner="subprocess")
     with tempfile.TemporaryDirectory() as temp_dir:
         # output_file = os.path.join(temp_dir, "output")
         # make payload
         payload = {
-            "processing_fn": "kubeflow_components.tests.conftest.processing_fn",
-            "init_fn": "kubeflow_components.tests.conftest.init_fn",
+            "processing_fn": "linke.tests.conftest.processing_fn",
+            "init_fn": "linke.tests.conftest.init_fn",
             "input_data": CsvInputData(
                 file=input_file, batch_size=2
             ).as_dict(),
@@ -170,8 +170,8 @@ def test_bigquery_reader_writer():
             output_table="nfa-core-prod.temp_dataset.test_beam_writer",
             schema=schema,
         ),
-        processing_fn="kubeflow_components.tests.conftest.bq_processing_fn",
-        init_fn="kubeflow_components.tests.conftest.csv_init_fn",
+        processing_fn="linke.tests.conftest.bq_processing_fn",
+        init_fn="linke.tests.conftest.csv_init_fn",
         beam_pipeline_args=[
             "--runner=DirectRunner",
             "--temp_location=gs://ml-pipeline-runs/bigquery",
@@ -182,9 +182,9 @@ def test_bigquery_reader_writer():
 
 # @pytest.mark.skip(reason="Skip for now during development")
 def test_tfrecord_reader_writer():
-    input_file = "kubeflow_components/tests/data/input.tfrecord"
+    input_file = "linke/tests/data/input.tfrecord"
     processing_fn = (
-        "kubeflow_components.tests.conftest.tfrecord_processing_fn"
+        "linke.tests.conftest.tfrecord_processing_fn"
     )
     with tempfile.TemporaryDirectory() as temp_dir:
         output_file = os.path.join(temp_dir, "output")
@@ -239,9 +239,9 @@ def test_tfrecord_reader_writer():
 
 @pytest.mark.skip(reason="Skip for now during development")
 def test_parquet_reader_writer():
-    input_file = "kubeflow_components/tests/data/input.parquet"
+    input_file = "linke/tests/data/input.parquet"
     processing_fn = (
-        "kubeflow_components.tests.conftest.parquet_processing_fn"
+        "linke.tests.conftest.parquet_processing_fn"
     )
     with tempfile.TemporaryDirectory() as temp_dir:
         output_file = os.path.join(temp_dir, "output")
