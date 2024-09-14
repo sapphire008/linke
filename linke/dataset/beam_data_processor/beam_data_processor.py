@@ -208,7 +208,7 @@ class BaseInputData(BaseData):
 
 @dataclass
 class BaseOutputData(BaseData):
-    pass
+    is_batched: bool = False
 
 
 # %% CSV Reader and Writers
@@ -949,13 +949,8 @@ def _check_gcp_project(
 class BatchReader(beam.PTransform):
     """Reader wrapper."""
 
-    def __init__(
-        self,
-        input_data: BaseInputData,
-        batch_size: Optional[int] = None,
-    ):
+    def __init__(self, input_data: BaseInputData):
         self.input_data = input_data
-        self.batch_size = batch_size
 
     def expand(self, pcoll: beam.PCollection) -> beam.PCollection:
         # inputs
@@ -963,7 +958,7 @@ class BatchReader(beam.PTransform):
             pcoll = pcoll.pipeline | "Read CSV" >> ReadCsvData(
                 self.input_data.file,
                 format=self.input_data.format,
-                min_batch_size=self.batch_size,
+                min_batch_size=self.input_data.batch_size,
             )
         elif isinstance(self.input_data, BigQueryInputData):
             # Check if temp_location exists
@@ -979,7 +974,7 @@ class BatchReader(beam.PTransform):
                     query=self.input_data.sql,
                     gcp_project_id=gcp_project_id,
                     format=self.input_data.format,
-                    min_batch_size=self.batch_size,
+                    min_batch_size=self.input_data.batch_size,
                     temp_dataset=self.input_data.temp_dataset,
                 )
             )
@@ -1009,11 +1004,8 @@ class BatchReader(beam.PTransform):
 class BatchWriter(beam.PTransform):
     """Writer wrapper."""
 
-    def __init__(
-        self, output_data: BaseOutputData, is_batched: bool = True
-    ):
+    def __init__(self, output_data: BaseOutputData):
         self.output_data = output_data
-        self.is_batched = is_batched
 
     def expand(self, pcoll: beam.PCollection) -> beam.PCollection:
         if isinstance(self.output_data, CsvOutputData):
@@ -1034,13 +1026,13 @@ class BatchWriter(beam.PTransform):
                 schema=self.output_data.schema,
                 write_disposition=self.output_data.mode,
                 method=self.output_data.write_method,
-                is_batched=self.is_batched,
+                is_batched=self.output_data.is_batched,
             )
         elif isinstance(self.output_data, TFRecordOutputData):
             pcoll = pcoll | "Write TFRecords" >> WriteTFRecordsData(
                 file_path=self.output_data.file,
                 schema=self.output_data.schema,
-                is_batched=self.is_batched,
+                is_batched=self.output_data.is_batched,
                 serialize_data=self.output_data.serialize_data,
                 num_shards=self.output_data.num_shards,
                 shard_name_template=self.output_data.shard_name_template,
@@ -1049,10 +1041,11 @@ class BatchWriter(beam.PTransform):
             pcoll = pcoll | "Write Parquet" >> WriteParquetData(
                 file_path=self.output_data.file,
                 schema=self.output_data.schema,
-                is_batched=self.is_batched,
+                is_batched=self.output_data.is_batched,
                 num_shards=self.output_data.num_shards,
                 shard_name_template=self.output_data.shard_name_template,
             )
+
 
 # %% Pipeline run function
 def beam_data_processing_fn(
@@ -1064,14 +1057,9 @@ def beam_data_processing_fn(
 ) -> None:
     options = PipelineOptions(flags=beam_pipeline_args)
 
-    batch_size = (
-        int(input_data.batch_size)
-        if input_data.batch_size is not None
-        else None
-    )
     # Create beam pipeline
     with beam.Pipeline(options=options) as pipeline:
-        pcoll = pipeline | BatchReader(input_data, batch_size)
+        pcoll = pipeline | BatchReader(input_data)
 
         # # Run the processing function
         pcoll = pcoll | "Process Data" >> beam.ParDo(
@@ -1085,6 +1073,5 @@ def beam_data_processing_fn(
         # return pcoll | beam.Map(print)
 
         # Output
-        pcoll = pcoll | BatchWriter(
-            output_data, is_batched=batch_size is not None
-        )
+        output_data.is_batched = input_data.batch_size is not None
+        pcoll = pcoll | BatchWriter(output_data)

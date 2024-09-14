@@ -14,7 +14,7 @@ from typing import (
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from linke.dataset.beam_data_processor.beam_data_processor import (
-    BaseInputData, ReadCsvData
+    BaseInputData, BatchReader
 )
 from linke.evaluation.metrics import BaseMetric
 
@@ -162,9 +162,9 @@ def create_evaluation_pipeline(
         pass
 
     # Create beam pipeline
-    with beam.Pipeline(options=options) as p:
+    with beam.Pipeline(options=options) as pipeline:
         # Read from data source
-        pass
+        pcoll = pipeline | BatchReader(input_data=eval_config.data)
         # Make model inference
 
         # Compute and combine metrics at different level
