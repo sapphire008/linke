@@ -56,7 +56,7 @@ for s in tabular_dataset:
 #%%
 
 tabular_dataset = (
-    wds.WebDataset("/Users/edward/Documents/Scripts/kubeflow-components/kubeflow_components/dataset/archive_fileio/")
+    wds.WebDataset("/Users/edward/Documents/Scripts/linke/linke/dataset/archive_fileio/")
     .to_tuple("json").batched(2)
 )
 for s in tabular_dataset:
