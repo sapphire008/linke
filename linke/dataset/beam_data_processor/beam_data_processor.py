@@ -909,6 +909,43 @@ class WriteWebDatasetData(beam.PTransform):
 
 
 # %% Create the processing function
+def _check_temp_location(pipeline_options: PipelineOptions):
+    options = pipeline_options.get_all_options()
+    assert (
+        options["temp_location"] is not None
+        and options["temp_location"] != ""
+    ), (
+        "Need to specify --temp_location argument "
+        "when reading from BigQuery"
+    )
+
+
+def _check_gcp_project(
+    input_data_gcp_project_id: str,
+    pipeline_options: PipelineOptions,
+):
+    options = pipeline_options.get_all_options()
+    if input_data_gcp_project_id:
+        return input_data_gcp_project_id
+
+    # Check beam pipeline args
+    if (
+        options.get("project") is not None
+        and options.get("project") != ""
+    ):
+        return options["project"]
+
+    # Check environment
+    gcp_project_id = os.environ.get("GCP_PROEJCT_ID")
+    assert gcp_project_id is not None and gcp_project_id != "", (
+        "GCP Project ID is needed to determine which environment "
+        "the SQL query is running in. Specify in the input_data, "
+        "beam_pipeline_args, or as an environment variable "
+        "GCP_PROJECT_ID"
+    )
+    return gcp_project_id
+
+
 class BatchReader(beam.PTransform):
     """Reader wrapper."""
 
@@ -920,43 +957,6 @@ class BatchReader(beam.PTransform):
         self.input_data = input_data
         self.batch_size = batch_size
 
-    @staticmethod
-    def check_temp_location(pipeline_options: PipelineOptions):
-        options = pipeline_options.get_all_options()
-        assert (
-            options["temp_location"] is not None
-            and options["temp_location"] != ""
-        ), (
-            "Need to specify --temp_location argument "
-            "when reading from BigQuery"
-        )
-
-    @staticmethod
-    def check_gcp_project(
-        input_data_gcp_project_id: str,
-        pipeline_options: PipelineOptions,
-    ):
-        options = pipeline_options.get_all_options()
-        if input_data_gcp_project_id:
-            return input_data_gcp_project_id
-
-        # Check beam pipeline args
-        if (
-            options.get("project") is not None
-            and options.get("project") != ""
-        ):
-            return options["project"]
-
-        # Check environment
-        gcp_project_id = os.environ.get("GCP_PROEJCT_ID")
-        assert gcp_project_id is not None and gcp_project_id != "", (
-            "GCP Project ID is needed to determine which environment "
-            "the SQL query is running in. Specify in the input_data, "
-            "beam_pipeline_args, or as an environment variable "
-            "GCP_PROJECT_ID"
-        )
-        return gcp_project_id
-
     def expand(self, pcoll: beam.PCollection) -> beam.PCollection:
         # inputs
         if isinstance(self.input_data, CsvInputData):
@@ -967,9 +967,9 @@ class BatchReader(beam.PTransform):
             )
         elif isinstance(self.input_data, BigQueryInputData):
             # Check if temp_location exists
-            self.check_temp_location(pcoll.pipeline.options)
+            _check_temp_location(pcoll.pipeline.options)
             # Check if gcp_project_id exists
-            gcp_project_id = self.check_gcp_project(
+            gcp_project_id = _check_gcp_project(
                 self.input_data.gcp_project_id, pcoll.pipeline.options
             )
             pcoll = (
@@ -1028,7 +1028,7 @@ class BatchWriter(beam.PTransform):
                 headers=self.output_data.headers,
             )
         elif isinstance(self.output_data, BigQueryOutputData):
-            BatchReader.check_temp_location(pcoll.pipeline.options)
+            _check_temp_location(pcoll.pipeline.options)
             pcoll = pcoll | "Write BigQuery" >> WriteBigQueryData(
                 output_table=self.output_data.output_table,
                 schema=self.output_data.schema,
@@ -1054,7 +1054,7 @@ class BatchWriter(beam.PTransform):
                 shard_name_template=self.output_data.shard_name_template,
             )
 
-
+# %% Pipeline run function
 def beam_data_processing_fn(
     input_data: BaseInputData,
     output_data: BaseOutputData,
