@@ -909,24 +909,150 @@ class WriteWebDatasetData(beam.PTransform):
 
 
 # %% Create the processing function
-def _check_gcs_project_id(
-    input_data_gcp_project_id: str, beam_pipeline_args: List[str]
-):
-    if input_data_gcp_project_id:
-        return input_data_gcp_project_id
+class BatchReader(beam.PTransform):
+    """Reader wrapper."""
 
-    # Check beam pipeline args
-    for arg in beam_pipeline_args:
-        if arg.startswith("--projects="):
-            return arg.split("=")[1]
+    def __init__(
+        self,
+        input_data: BaseInputData,
+        batch_size: Optional[int] = None,
+    ):
+        self.input_data = input_data
+        self.batch_size = batch_size
 
-    # Check environment
-    gcp_project_id = os.environ.get("GCP_PROEJCT_ID")
-    assert gcp_project_id is not None and gcp_project_id != "", (
-        "GCP Project ID is needed to determine which environment "
-        "the SQL query is running in"
-    )
-    return gcp_project_id
+    @staticmethod
+    def check_temp_location(pipeline_options: PipelineOptions):
+        options = pipeline_options.get_all_options()
+        assert (
+            options["temp_location"] is not None
+            and options["temp_location"] != ""
+        ), (
+            "Need to specify --temp_location argument "
+            "when reading from BigQuery"
+        )
+
+    @staticmethod
+    def check_gcp_project(
+        input_data_gcp_project_id: str,
+        pipeline_options: PipelineOptions,
+    ):
+        options = pipeline_options.get_all_options()
+        if input_data_gcp_project_id:
+            return input_data_gcp_project_id
+
+        # Check beam pipeline args
+        if (
+            options.get("project") is not None
+            and options.get("project") != ""
+        ):
+            return options["project"]
+
+        # Check environment
+        gcp_project_id = os.environ.get("GCP_PROEJCT_ID")
+        assert gcp_project_id is not None and gcp_project_id != "", (
+            "GCP Project ID is needed to determine which environment "
+            "the SQL query is running in. Specify in the input_data, "
+            "beam_pipeline_args, or as an environment variable "
+            "GCP_PROJECT_ID"
+        )
+        return gcp_project_id
+
+    def expand(self, pcoll: beam.PCollection) -> beam.PCollection:
+        # inputs
+        if isinstance(self.input_data, CsvInputData):
+            pcoll = pcoll.pipeline | "Read CSV" >> ReadCsvData(
+                self.input_data.file,
+                format=self.input_data.format,
+                min_batch_size=self.batch_size,
+            )
+        elif isinstance(self.input_data, BigQueryInputData):
+            # Check if temp_location exists
+            self.check_temp_location(pcoll.pipeline.options)
+            # Check if gcp_project_id exists
+            gcp_project_id = self.check_gcp_project(
+                self.input_data.gcp_project_id, pcoll.pipeline.options
+            )
+            pcoll = (
+                pcoll.pipeline
+                | "Read BigQuery"
+                >> ReadBigQueryData(
+                    query=self.input_data.sql,
+                    gcp_project_id=gcp_project_id,
+                    format=self.input_data.format,
+                    min_batch_size=self.batch_size,
+                    temp_dataset=self.input_data.temp_dataset,
+                )
+            )
+        elif isinstance(self.input_data, TFRecordInputData):
+            pcoll = (
+                pcoll.pipeline
+                | "Read TFRecord"
+                >> ReadTFRecordData(
+                    file_pattern=self.input_data.file,
+                    schema=self.input_data.schema,
+                    feature_type=self.input_data.feature_type,
+                    compression_type=self.input_data.compression_type,
+                    format=self.input_data.format,
+                    min_batch_size=self.input_data.batch_size,
+                )
+            )
+        elif isinstance(self.input_data, ParquetInputData):
+            pcoll = pcoll.pipeline | "Read Parquet" >> ReadParquetData(
+                file_pattern=self.input_data.file,
+                columns=self.input_data.columns,
+                format=self.input_data.format,
+                min_batch_size=self.input_data.batch_size,
+            )
+        return pcoll
+
+
+class BatchWriter(beam.PTransform):
+    """Writer wrapper."""
+
+    def __init__(
+        self, output_data: BaseOutputData, is_batched: bool = True
+    ):
+        self.output_data = output_data
+        self.is_batched = is_batched
+
+    def expand(self, pcoll: beam.PCollection) -> beam.PCollection:
+        if isinstance(self.output_data, CsvOutputData):
+            num_shards = (
+                int(self.output_data.num_shards)
+                if self.output_data.num_shards is not None
+                else None
+            )
+            pcoll = pcoll | "Write CSV" >> WriteCsvData(
+                self.output_data.file,
+                num_shards=num_shards,
+                headers=self.output_data.headers,
+            )
+        elif isinstance(self.output_data, BigQueryOutputData):
+            BatchReader.check_temp_location(pcoll.pipeline.options)
+            pcoll = pcoll | "Write BigQuery" >> WriteBigQueryData(
+                output_table=self.output_data.output_table,
+                schema=self.output_data.schema,
+                write_disposition=self.output_data.mode,
+                method=self.output_data.write_method,
+                is_batched=self.is_batched,
+            )
+        elif isinstance(self.output_data, TFRecordOutputData):
+            pcoll = pcoll | "Write TFRecords" >> WriteTFRecordsData(
+                file_path=self.output_data.file,
+                schema=self.output_data.schema,
+                is_batched=self.is_batched,
+                serialize_data=self.output_data.serialize_data,
+                num_shards=self.output_data.num_shards,
+                shard_name_template=self.output_data.shard_name_template,
+            )
+        elif isinstance(self.output_data, ParquetOutputData):
+            pcoll = pcoll | "Write Parquet" >> WriteParquetData(
+                file_path=self.output_data.file,
+                schema=self.output_data.schema,
+                is_batched=self.is_batched,
+                num_shards=self.output_data.num_shards,
+                shard_name_template=self.output_data.shard_name_template,
+            )
 
 
 def beam_data_processing_fn(
@@ -944,49 +1070,8 @@ def beam_data_processing_fn(
         else None
     )
     # Create beam pipeline
-    with beam.Pipeline(options=options) as p:
-        # inputs
-        if isinstance(input_data, CsvInputData):
-            pcoll = p | "Read CSV" >> ReadCsvData(
-                input_data.file,
-                format=input_data.format,
-                min_batch_size=batch_size,
-            )
-        elif isinstance(input_data, BigQueryInputData):
-            # Check if --temp_location exists
-            assert any(
-                [
-                    a.startswith("--temp_location=")
-                    for a in beam_pipeline_args
-                ]
-            ), "Need to specify --temp_location argument when reading from BigQuery"
-            # Check if gcp_project_id exists
-            gcp_project_id = _check_gcs_project_id(
-                input_data.gcp_project_id, beam_pipeline_args
-            )
-            pcoll = p | "Read BigQuery" >> ReadBigQueryData(
-                query=input_data.sql,
-                gcp_project_id=gcp_project_id,
-                format=input_data.format,
-                min_batch_size=batch_size,
-                temp_dataset=input_data.temp_dataset,
-            )
-        elif isinstance(input_data, TFRecordInputData):
-            pcoll = p | "Read TFRecord" >> ReadTFRecordData(
-                file_pattern=input_data.file,
-                schema=input_data.schema,
-                feature_type=input_data.feature_type,
-                compression_type=input_data.compression_type,
-                format=input_data.format,
-                min_batch_size=input_data.batch_size,
-            )
-        elif isinstance(input_data, ParquetInputData):
-            pcoll = p | "Read Parquet" >> ReadParquetData(
-                file_pattern=input_data.file,
-                columns=input_data.columns,
-                format=input_data.format,
-                min_batch_size=input_data.batch_size,
-            )
+    with beam.Pipeline(options=options) as pipeline:
+        pcoll = pipeline | BatchReader(input_data, batch_size)
 
         # # Run the processing function
         pcoll = pcoll | "Process Data" >> beam.ParDo(
@@ -996,48 +1081,10 @@ def beam_data_processing_fn(
             )
         )
 
+        # Debug print
         # return pcoll | beam.Map(print)
 
         # Output
-        if isinstance(output_data, CsvOutputData):
-            num_shards = (
-                int(output_data.num_shards)
-                if output_data.num_shards is not None
-                else None
-            )
-            pcoll = pcoll | "Write CSV" >> WriteCsvData(
-                output_data.file,
-                num_shards=num_shards,
-                headers=output_data.headers,
-            )
-        elif isinstance(output_data, BigQueryOutputData):
-            assert any(
-                [
-                    a.startswith("--temp_location=")
-                    for a in beam_pipeline_args
-                ]
-            ), "Need to specify --temp_location argument when writing to BigQuery"
-            pcoll = pcoll | "Write BigQuery" >> WriteBigQueryData(
-                output_table=output_data.output_table,
-                schema=output_data.schema,
-                write_disposition=output_data.mode,
-                method=output_data.write_method,
-                is_batched=batch_size is not None,
-            )
-        elif isinstance(output_data, TFRecordOutputData):
-            pcoll = pcoll | "Write TFRecords" >> WriteTFRecordsData(
-                file_path=output_data.file,
-                schema=output_data.schema,
-                is_batched=batch_size is not None,
-                serialize_data=output_data.serialize_data,
-                num_shards=output_data.num_shards,
-                shard_name_template=output_data.shard_name_template,
-            )
-        elif isinstance(output_data, ParquetOutputData):
-            pcoll = pcoll | "Write Parquet" >> WriteParquetData(
-                file_path=output_data.file,
-                schema=output_data.schema,
-                is_batched=batch_size is not None,
-                num_shards=output_data.num_shards,
-                shard_name_template=output_data.shard_name_template,
-            )
+        pcoll = pcoll | BatchWriter(
+            output_data, is_batched=batch_size is not None
+        )

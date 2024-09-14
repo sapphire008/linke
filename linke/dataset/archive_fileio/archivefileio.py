@@ -160,8 +160,8 @@ class ReadFromWebDataset(beam.PTransform):
             validate=validate,
         )
 
-    def expand(self, pvalue):
-        return pvalue.pipeline | iobase.Read(self._source)
+    def expand(self, pcoll: beam.PCollection) -> beam.PCollection:
+        return pcoll.pipeline | iobase.Read(self._source)
 
 
 # %% Write
