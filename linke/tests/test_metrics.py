@@ -4,7 +4,6 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from pdb import set_trace
 
-# set_trace()
 from linke.evaluation.metrics import (
     TopKMetricPreprocessor,
     HitRatioTopK,
@@ -16,6 +15,8 @@ from linke.evaluation.metrics import (
     PopulationTopKMetricPreprocessor,
     _CoverageTopKCombiner,
     CoverageTopK,
+    _RedundancyTopKCombiner,
+    RedundacyTopK,
 )
 from linke.evaluation.metrics import (
     DEFAULT_PREDICTION_KEY,
@@ -567,3 +568,42 @@ class TestCoverageTopK:
         assert all(
             [np.allclose(output[k], expected[k]) for k in output]
         )
+
+
+class TestRedundancy:
+    def setup_method(self, method=None):
+        self.metric = RedundacyTopK(
+            top_k=[1, 4, 5],
+        )
+
+    def test_specs(self):
+        assert isinstance(self.metric.combiner, _RedundancyTopKCombiner)
+        assert len(self.metric.preprocessors) == 1
+        assert isinstance(
+            self.metric.preprocessors[0],
+            PopulationTopKMetricPreprocessor,
+        )
+        # No vocab estimation process
+        assert self.metric.combiner.vocabulary is None
+        vocab_estimate = self.metric.preprocessors[0].vocabulary_fields
+        assert len(vocab_estimate) == 0
+
+    def test_metric(self):
+        preprocessor = self.metric.preprocessors[0]
+        combiner = self.metric.combiner
+        element = {
+            DEFAULT_PREDICTION_KEY: np.array(
+                [
+                    ["A", "B", "C", "D", "E"],
+                    ["D", "A", "B", "C", "E"],
+                    ["A", "C", "B", "D", "E"],
+                ]
+            )
+        }
+        accumulator = next(iter(preprocessor.process(element)))
+        num = accumulator[1]
+        assert num == len(element[DEFAULT_PREDICTION_KEY])
+        output = combiner.extract_output(accumulator)
+        for k in output:
+            expected = 1 - len(accumulator[0][k].keys()) / (num * k)
+            assert np.allclose(expected, output[k])
