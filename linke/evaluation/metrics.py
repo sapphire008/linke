@@ -621,6 +621,7 @@ class _CoverageTopKCombiner(PopulationTopKMetricCombiner):
         coverage = {}
         for k in accumulator:
             covered = accumulator[k].keys()
+            covered = set(covered).intersection(set(vocabulary))
             coverage[k] = len(covered) / len(vocabulary)
         return coverage
 

@@ -536,7 +536,10 @@ class TestCoverageTopK:
 
         # Check combiner
         output = combiner.extract_output((out_metrics, out_num))
-        expected = {1: 0.4, 4: 0.8, 5: 1.0, "label": 1.2}
+        # check: if we forget to take the intersection between 
+        # label and accumulated vocabulary, the "label" value
+        # would end up 1.2, which may not make sense.
+        expected = {1: 0.4, 4: 0.8, 5: 1.0, "label": 1.0}
         assert output == expected
 
     def test_metric_vocabulary(self):
