@@ -10,6 +10,9 @@ from kubeflow_components.evaluation.metrics import (
     _NDCGTopKPreprocessor,
     SampleTopKMetricCombiner,
     PopulationTopKMetricCombiner,
+    _CoverageTopKCominer,
+    _CoverageTopKPreprocessor,
+    CoverageTopK,
 )
 from kubeflow_components.evaluation.metrics import (
     DEFAULT_PREDICTION_KEY,
@@ -19,7 +22,7 @@ from kubeflow_components.evaluation.metrics import (
 from pdb import set_trace
 
 
-@pytest.mark.skip(reason="temporary")
+
 class TestTopKMetricPreprocessor:
     def setup_method(self, method=None):
         self.preprocessor = TopKMetricPreprocessor(top_k=[1, 4, 5, 10])
@@ -115,7 +118,7 @@ class TestTopKMetricPreprocessor:
         assert (out.tocoo().col == np.array([0, 1, 2, 0, 1])).all()
 
 
-@pytest.mark.skip(reason="temporary")
+
 class TestSampleTopKMetricCombiner:
     """Test beam.CombineFn"""
 
@@ -167,7 +170,7 @@ class TestSampleTopKMetricCombiner:
             np.allclose(v, accumulator[k] / count)
 
 
-@pytest.mark.skip(reason="temporary")
+
 class TestHitRatioTopK:
     def setup_method(self, method=None):
         self.metric = HitRatioTopK(top_k=[1, 4, 5])
@@ -209,7 +212,7 @@ class TestHitRatioTopK:
             assert expected == out_metrics[k]
 
 
-@pytest.mark.skip(reason="temporary")
+
 class TestNDCGTopK:
     def setup_method(self, method=None):
         self.metric = NDCGTopK(top_k=[1, 4, 5], weight_key="weight")
@@ -299,7 +302,7 @@ class TestNDCGTopK:
         self.compare_results(expected_rel, out_metrics)
 
 
-@pytest.mark.skip(reason="temporary")
+
 class TestPopulationTopKMetricCombiner:
     def setup_method(self, method=None):
         self.combiner = PopulationTopKMetricCombiner(
@@ -392,7 +395,6 @@ class TestPopulationTopKMetricCombiner:
         assert count == num
 
 
-@pytest.mark.skip(reason="temporary")
 class TestPopulationTopKMetricCombinerWithVocabulary:
     def setup_method(self, method=None):
         self.combiner = PopulationTopKMetricCombiner(
@@ -480,3 +482,64 @@ class TestPopulationTopKMetricCombinerWithVocabulary:
         for k in out:
             for vv in self.combiner.constraint:
                 assert combined[k][vv] == out[k][vv]
+
+
+class TestCoverageMetric:
+    def setup_method(self, method=None):
+        self.metric = CoverageTopK(
+            top_k=[1,4,5],
+            include_labels=True,
+            vocabulary=None,
+        )
+        self.metric_vocabulary = CoverageTopK(
+            top_k=[1,4,5],
+            include_labels=True,
+            vocabulary=["A", "B", "C", "D", "E", "F"],
+            constrain_accumulation=False,
+        )
+        self.metric_constraint = CoverageTopK(
+            top_k=[1,4,5],
+            include_labels=True,
+            vocabulary=["A", "B", "C", "D", "E", "F"],
+            constrain_accumulation=False,
+        )
+    def test_specs(self):
+        assert isinstance(
+            self.metric.combiner, _CoverageTopKCominer
+        )
+        assert len(self.metric.preprocessors) == 1
+        assert isinstance(
+            self.metric.preprocessors[0], _CoverageTopKPreprocessor
+        )
+        
+    def test_metric(self):
+        processor = self.metric.preprocessors[0]
+        combiner = self.metric.combiner
+        # Binary case
+        element = {
+            DEFAULT_PREDICTION_KEY: np.array(
+                [
+                    ["A", "B", "C", "D", "E"],
+                    ["D", "A", "C", "B", "E"],
+                    ["E", "B", "A", "C", "D"],
+                ]
+            ),
+            DEFAULT_LABEL_KEY: [
+                ["A", "C"],
+                ["B"],
+                ["D", "E", "F"],
+            ],
+        }
+        
+        out_metrics, out_num = next(iter(processor.process(element)))
+        set_trace()
+
+        # Check num elements expected
+        assert out_num == len(element[DEFAULT_LABEL_KEY])
+        
+    
+    def test_metric_vocabulary(self):
+        pass
+    
+    def test_metric_constraint(self):
+        pass
