@@ -136,7 +136,7 @@ def test_bigquery_output_data():
     )
 
 
-# @pytest.mark.skip(reason="Skip for now during development")
+@pytest.mark.skip(reason="Skip for now during development")
 def test_bigquery_reader_writer():
     """To Run this test, set up is needed on a Google Cloud project.
     * Create the table using the sql from data/input_bq.sql
