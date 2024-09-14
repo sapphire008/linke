@@ -58,26 +58,49 @@ class DataProcessingDoFn(beam.DoFn):
     def __init__(
         self,
         processing_fn: Union[
-            str, Callable[[List[Dict], Dict], List[Dict]]
+            str, Callable[[List[Dict], Dict], Union[Dict, List[Dict]]]
         ],
-        init_fn: Union[str, Callable[[], Dict]] = None,
+        setup_fn: Union[str, Callable[[], Dict]] = None,
         config: Dict = {},
+        force_iterable_output: bool = True,
     ):
+        """
+        Data processing function wrapper for beam pipeline.
+
+        Parameters
+        ----------
+        processing_fn : Union[ str,
+            Callable[[List[Dict], Dict], Union[Dict, List[Dict]]] ]
+            Module path to the main processing function. The functio needs to
+            have the signature processing_fn(inputs, config)
+        setup_fn : Union[str, Callable[[], Dict]], optional
+            Module path to the initialization function, where
+            heavy initialization is needed. The artifact is then accessible
+            under self.config["weak_ref"]. For example, this could be a
+            place to initialize/load some models. By default None.
+        config : Dict, optional
+            Additional static configuration passed to the processing_fn,
+            by default {}.
+        force_iterable_output : bool, optional
+            Forcing conversion from a dict output from processing_fn
+            to an iterable/list output, by default True.
+        """
         self._shared_handle = beam.utils.shared.Shared()
         self.processing_fn = (
             self.import_function(processing_fn)
             if isinstance(processing_fn, str)
             else processing_fn
         )
-        self.init_fn = (
-            self.import_function(init_fn)
-            if isinstance(init_fn, str)
-            else init_fn
+        self.setup_fn = (
+            self.import_function(setup_fn)
+            if isinstance(setup_fn, str)
+            else setup_fn
         )
         assert (
             "weak_ref" not in config
         ), "weak_ref is a reserved field name for `config`"
         self.config = config
+        self.force_iterable_output = force_iterable_output
 
     @staticmethod
     def import_function(path: str) -> Callable:
@@ -93,12 +116,12 @@ class DataProcessingDoFn(beam.DoFn):
     def setup(self):
         def _initialize() -> WeakRef:
             # Call initialization function
-            result: Dict = self.init_fn()
+            result: Dict = self.setup_fn()
             # Convert to WeakRef
             return WeakRef(**result)
 
         # Create reference objects
-        if self.init_fn:  # run initi_fn if it is available
+        if self.setup_fn:  # run initi_fn if it is available
             self.config["weak_ref"] = self._shared_handle.acquire(
                 _initialize
             )
@@ -121,7 +144,7 @@ class DataProcessingDoFn(beam.DoFn):
         return df_inputs.to_dict("records")
 
     def process(
-        self, element
+        self, element: List[Dict]
     ) -> Generator[
         Union[pd.DataFrame, pd.Series, List[Dict], Dict], None, None
     ]:
@@ -129,7 +152,10 @@ class DataProcessingDoFn(beam.DoFn):
         outputs = self.processing_fn(element, config=self.config)
 
         # Convert to list of dict iff returning dict
-        if not isinstance(outputs, (list, tuple)):
+        if (
+            not isinstance(outputs, (list, tuple))
+            and self.force_iterable_output
+        ):
             outputs = self.dict2list(outputs)
 
         yield outputs
@@ -1048,16 +1074,15 @@ class BatchWriter(beam.PTransform):
 
 
 # %% Pipeline run function
-def beam_data_processing_fn(
+def create_data_processing_pipeline(
     input_data: BaseInputData,
     output_data: BaseOutputData,
     processing_fn: str,
-    init_fn: str = None,
+    setup_fn: str = None,
     beam_pipeline_args: List[str] = ["--runner=DirectRunner"],
 ) -> None:
-    options = PipelineOptions(flags=beam_pipeline_args)
-
     # Create beam pipeline
+    options = PipelineOptions(flags=beam_pipeline_args)
     with beam.Pipeline(options=options) as pipeline:
         pcoll = pipeline | BatchReader(input_data)
 
@@ -1065,7 +1090,7 @@ def beam_data_processing_fn(
         pcoll = pcoll | "Process Data" >> beam.ParDo(
             DataProcessingDoFn(
                 processing_fn=processing_fn,
-                init_fn=init_fn,
+                setup_fn=setup_fn,
             )
         )
 

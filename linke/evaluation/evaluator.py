@@ -14,7 +14,7 @@ from typing import (
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from linke.dataset.beam_data_processor.beam_data_processor import (
-    BaseInputData, BatchReader
+    BaseInputData, BatchReader, DataProcessingDoFn
 )
 from linke.evaluation.metrics import BaseMetric
 
@@ -27,7 +27,7 @@ from linke.evaluation.metrics import BaseMetric
 class ModelSpec:
     name: str
     inference_fn: Union[str, Callable]
-    init_fn: Union[str, Callable]
+    setup_fn: Union[str, Callable]
 
 
 @dataclass
@@ -126,16 +126,6 @@ class MetricWriter(beam.PTransform):
         )
 
 
-# %% Model prediction
-class ModelInference(beam.PTransform):
-    """Batch job to make inference on model."""
-
-    def __init__(self):
-        pass
-
-    def expand(self, pcoll):
-        return pcoll
-
 
 # %% Evaluation pipeline
 def _validate_metric_names(metrics: List[MetricSpec]):
@@ -153,7 +143,6 @@ def create_evaluation_pipeline(
     eval_config: EvalConfig,
     beam_pipeline_args: List[str] = ["--runner=DirectRunner"],
 ):
-    options = PipelineOptions(flags=beam_pipeline_args)
 
     # Metrics
     _validate_metric_names(eval_config.metrics)
@@ -162,9 +151,16 @@ def create_evaluation_pipeline(
         pass
 
     # Create beam pipeline
+    options = PipelineOptions(flags=beam_pipeline_args)
     with beam.Pipeline(options=options) as pipeline:
         # Read from data source
         pcoll = pipeline | BatchReader(input_data=eval_config.data)
         # Make model inference
-
-        # Compute and combine metrics at different level
+        pcolls = pcoll | DataProcessingDoFn(
+            processing_fn=eval_config.model.inference_fn,
+            setup_fn=eval_config.model.setup_fn,
+            config={},
+            force_iterable_output=False,
+        )
+        # Compute and combine metrics
+        

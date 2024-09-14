@@ -8,7 +8,7 @@ from kfp.dsl import Output, Artifact
 @dsl.component
 def beam_data_processing_component(
     processing_fn: str,
-    init_fn: str,
+    setup_fn: str,
     input_data: Dict,
     output_data: Dict,
     # input_artifact: Optional[Input[Artifact]] = None,
@@ -20,7 +20,7 @@ def beam_data_processing_component(
     # Importing all the helper functions
     import os
     from linke.dataset.beam_data_processor.beam_data_processor import (
-        beam_data_processing_fn,
+        create_data_processing_pipeline,
         BaseData,
     )
 
@@ -45,10 +45,10 @@ def beam_data_processing_component(
         assert output_data_obj.file is not None, "Need to specify the output file name when not use_output_artifact = False"
 
     # Call the data processor
-    beam_data_processing_fn(
+    create_data_processing_pipeline(
         input_data=input_data_obj,
         output_data=output_data_obj,
         processing_fn=processing_fn,
-        init_fn=init_fn,
+        setup_fn=setup_fn,
         beam_pipeline_args=beam_pipeline_args,
     )

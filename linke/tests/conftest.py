@@ -11,7 +11,7 @@ def csv_processing_fn(
     return df.to_dict("records")
 
 
-def csv_init_fn() -> Dict:
+def csv_setup_fn() -> Dict:
     return {"a": "asdf", "b": "bsdf"}
 
 
