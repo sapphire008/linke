@@ -62,7 +62,8 @@ class DataProcessingDoFn(beam.DoFn):
         ],
         setup_fn: Union[str, Callable[[], Dict]] = None,
         config: Dict = {},
-        force_iterable_output: bool = True,
+        input_format: Optional[Literal["dict", "list"]] = "list",
+        output_format: Optional[Literal["dict", "list"]] = "list",
     ):
         """
         Data processing function wrapper for beam pipeline.
@@ -81,9 +82,16 @@ class DataProcessingDoFn(beam.DoFn):
         config : Dict, optional
             Additional static configuration passed to the processing_fn,
             by default {}.
-        force_iterable_output : bool, optional
-            Forcing conversion from a dict output from processing_fn
-            to an iterable/list output, by default True.
+        input_format: Literal["dict", "list"], optional
+            The converted format will be used in the processing_fn's
+            `inputs` argument.
+            - "list": Forcing conversion from a dict into an
+                iterable/list output.
+            - "dict":
+            - None: as is from the reader.
+        output_format : Literal["dict", "list"], optional
+            Forcing a conversion for the output format of the
+            processing_fn. See input_format.
         """
         self._shared_handle = beam.utils.shared.Shared()
         self.processing_fn = (
@@ -100,7 +108,8 @@ class DataProcessingDoFn(beam.DoFn):
             "weak_ref" not in config
         ), "weak_ref is a reserved field name for `config`"
         self.config = config
-        self.force_iterable_output = force_iterable_output
+        self.input_format = input_format
+        self.output_format = output_format
 
     @staticmethod
     def import_function(path: str) -> Callable:
@@ -143,20 +152,38 @@ class DataProcessingDoFn(beam.DoFn):
             )
         return df_inputs.to_dict("records")
 
-    def process(
-        self, element: List[Dict]
-    ) -> Generator[
-        Union[pd.DataFrame, pd.Series, List[Dict], Dict], None, None
-    ]:
+    @staticmethod
+    def list2dict(inputs: Union[Tuple, List]) -> Dict:
+        try:
+            inputs = pd.DataFrame(inputs)
+        except:
+            raise (
+                ValueError(
+                    "Failed the attempt to convert from list of features "
+                    "to dict. Features may not be the same length. "
+                    "This is unexpected."
+                )
+            )
+        return inputs.to_dict("list")
+
+    def process(self, element: Union[List[Dict], Dict]):
+        if self.input_format == "list" and isinstance(element, dict):
+            element = self.dict2list(element)
+        elif self.input_format == "dict" and not isinstance(
+            element, dict
+        ):
+            element = self.list2dict(element)
+
         # Call the processing function
-        outputs = self.processing_fn(element, config=self.config)
+        outputs = self.processing_fn(element, self.config)
 
         # Convert to list of dict iff returning dict
-        if (
-            not isinstance(outputs, (list, tuple))
-            and self.force_iterable_output
-        ):
+        if self.output_format == "list" and isinstance(outputs, dict):
             outputs = self.dict2list(outputs)
+        elif self.output_format == "dict" and not isinstance(
+            outputs, dict
+        ):
+            outputs = self.list2dict(outputs)
 
         yield outputs
 

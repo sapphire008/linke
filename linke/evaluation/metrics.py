@@ -21,7 +21,7 @@ from pdb import set_trace
 
 
 # %% Metrics Base Classes
-DEFAULT_PREDICTION_KEY = "prediciton"
+DEFAULT_PREDICTION_KEY = "prediction"
 DEFAULT_LABEL_KEY = "label"
 DEFAULT_FEATURE_KEY = "feature"
 
