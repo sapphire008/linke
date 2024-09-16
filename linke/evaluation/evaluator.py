@@ -386,7 +386,7 @@ def set_nested_value(my_dict, path, value):
 
 def determine_blessing(
     metric_results: Dict, metrics_specs: List[MetricSpec]
-):
+) -> Dict:
     # by default, if no threshold is specified,
     # the metric is passed
     is_blessed = True
@@ -394,10 +394,11 @@ def determine_blessing(
     for metric in metrics_specs:
         if not metric.thresholds:
             continue
-        value = metric_results[metric.name]
+        result = metric_results[metric.name]
         # Iterate over list of thresholds
         for thresh in metric.thresholds:
             # extracting nested field
+            value = result
             for key in thresh.metric_keys or []:
                 value = value[key]
             if thresh.lower:

@@ -35,14 +35,19 @@ def beam_data_processing_component(
         if output_data_obj.file is not None:
             # Reusing the filename
             output_data_obj.file = os.path.join(
-                output_artifact.path, os.path.basename(output_data_obj.file)
+                output_artifact.path,
+                os.path.basename(output_data_obj.file),
             )
         else:
             output_data_obj.file = os.path.join(
                 output_artifact.path, "output"
             )
     elif output_dataclass.has_field("file") and not use_output_artifact:
-        assert output_data_obj.file is not None, "Need to specify the output file name when not use_output_artifact = False"
+        assert (
+            output_data_obj.file is not None,
+            "Need to specify the output file name when not "
+            "use_output_artifact = False",
+        )
 
     # Call the data processor
     run_data_processing_pipeline(

@@ -2,6 +2,7 @@ import os
 import json
 import pytest
 import tempfile
+import copy
 import numpy as np
 import pandas as pd
 from linke.dataset.beam_data_processor.beam_data_processor import (
@@ -168,4 +169,32 @@ class TestEvaluator:
                         assert np.allclose(expected, obtained)
                         
     def test_determine_blessing(self):
-        pass
+        # Mocking a metric output
+        metric_results = {
+            "hit_ratio": {
+                "": {
+                    "": {1: 0.28, 4: 0.54, 5: 0.71},
+                },
+                "B": {
+                    "0": {1: 0.31, 4: 0.62, 5: 0.75},
+                    "1": {1: 0.24, 4: 0.37, 5: 0.64},
+                    "3": {1: 0.11, 4: 0.27, 5: 0.53},
+                }
+            }
+        }
+        metric_spec = copy.deepcopy(self.metric_hit_ratio)
+        metric_spec.thresholds = [
+                # Only lower bound: pass
+                MetricThreshold(["B", "0", 1], lower=0.10),
+                # needs to be in-between: pass
+                MetricThreshold(["B", "0", 4], lower=0.27, upper=0.75),
+                # needs to be in-between: fail
+                MetricThreshold(["B", "0", 5], lower=0.27, upper=0.65)
+            ]
+        
+        blessing_results = determine_blessing(metric_results, [metric_spec])
+        assert blessing_results["is_blessed"] == False
+        field = blessing_results["explanations"]["hit_ratio"]["B"]["0"]
+        expectation = {1: "(Passed)", 4: "(Passed)", 5: "(Failed)"}
+        for k, v in field.items():
+            assert v.startswith(expectation[k])
