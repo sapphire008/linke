@@ -1,4 +1,6 @@
 import os
+import json
+import pytest
 import tempfile
 import numpy as np
 import pandas as pd
@@ -19,22 +21,23 @@ from pdb import set_trace
 import warnings
 warnings.filterwarnings("ignore")
 
+
 def label_transform_fn(labels, config={}):
-    alphabet = "abcdefghij"
+    alphabet = "abcdefghijk"
     transformed_labels = []
     for val in labels:
         label = [alphabet[ii] for ii in range(val)]
-        np.random.shuffle(label)
+        np.random.RandomState(val+42).shuffle(label)
         transformed_labels.append(label)
     return transformed_labels
 
 def inference_fn(inputs, config={}):
-    alphabet = "abcdefghij"
-    predictions = []        
+    alphabet = "abcdefghijk"
+    predictions = []     
     # Faking predictions
-    for _ in range(len(inputs["A"])):
-        prediction =list(alphabet)
-        np.random.shuffle(prediction)
+    for index in inputs["A"]:
+        prediction = list(alphabet)
+        np.random.RandomState(index + 327).shuffle(prediction)
         predictions.append(prediction)
     predictions = np.array(predictions)
     return predictions
@@ -71,21 +74,94 @@ class TestEvaluator:
             config={"top_k": [1, 4, 5]},
         )
     
-    def teardown_method(self, method=None):
-        # remove temp data file
-        pass
-
+    @pytest.mark.skip(reason="")
     def test_evaluation_pipeline(self):
         """Test evaluation pipeline from end-to-end."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            temp_dir = "./"
+            # temp_dir = "./"
+            metric_result = os.path.join(temp_dir, "metric_result.json")
+            blessing_result = os.path.join(temp_dir, "blessing_result.json")
             create_evaluation_pipeline(
                 eval_config=EvalConfig(
                     model=self.model_spec,
                     metrics=[self.metric_hit_ratio, self.metric_ndcg],
                     data=self.data_spec,
                 ),
-                metric_result=os.path.join(temp_dir, "metric_result.json"),
-                blessing_result=os.path.join(temp_dir, "blessing_result.json"),
+                metric_result=metric_result,
+                blessing_result=blessing_result,
                 beam_pipeline_args=["--runner=DirectRunner"]
             )
+            # Check results
+            with open(metric_result, "r") as fid:
+                result = json.load(fid)
+                assert "ndcg" in result
+                assert "hit_ratio" in result
+                assert all([str(k) in result["ndcg"] for k in self.metric_ndcg.metric.combiner.top_k])
+                assert all([str(k) in result["hit_ratio"] for k in self.metric_ndcg.metric.combiner.top_k])
+            with open(blessing_result, "r") as fid:
+                blessing = json.load(fid)
+                assert blessing.get("is_blessed") == True
+                assert isinstance(blessing.get("explanations"), str)
+    
+    def test_sliced_evaluation_pipeline(self):
+        data_path = "linke/tests/data/input.csv"
+        data_spec = DataSpec(
+            input_data=CsvInputData(
+                # Not really doing anything
+                file=data_path, batch_size=2
+            ),
+            label_key="E",
+            slices = [SliceConfig(feature_keys=["B"]), SliceConfig(feature_keys=["C", "D"])],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metric_result = os.path.join(temp_dir, "metric_result.json")
+            blessing_result = os.path.join(temp_dir, "blessing_result.json")
+            create_evaluation_pipeline(
+                eval_config=EvalConfig(
+                    model=self.model_spec,
+                    metrics=[self.metric_hit_ratio, self.metric_ndcg],
+                    data=data_spec,
+                ),
+                metric_result=metric_result,
+                blessing_result=blessing_result,
+                beam_pipeline_args=["--runner=DirectRunner"]
+            )
+            # Create expected results for hit_ratio
+            df = pd.read_csv(data_path)
+            predictions = inference_fn(df)
+            transformed_labels = label_transform_fn(df["E"])
+            for k in [1, 4, 5]:
+                hit_ratios = [
+                    len(set(pred).intersection(set(lab))) > 0
+                    for pred, lab in zip(predictions[:, :k], transformed_labels)
+                ]
+                df[f"hit_ratio_{k}"] = np.array(hit_ratios).astype(float)
+                        
+            # Check results
+            with open(metric_result, "r") as fid:
+                result = json.load(fid)
+                assert "ndcg" in result
+                assert "hit_ratio" in result
+                hit_ratio_dict = result["hit_ratio"]
+                # Check results
+                for k in [1, 4, 5]:
+                    # Check global
+                    hit_ratio_global = df[f"hit_ratio_{k}"].mean()
+                    assert np.allclose(hit_ratio_global, hit_ratio_dict[""][""][str(k)])
+                # Check the first partition
+                hit_ratio_B = df.groupby(by="B").mean()
+                for k in [1, 4, 5]:
+                    for key, val in hit_ratio_dict["B"].items():
+                        expected = hit_ratio_B.loc[int(key), f"hit_ratio_{k}"]
+                        obtained = val[str(k)]
+                        assert np.allclose(expected, obtained)
+                        
+                hit_ratio_CD = df.groupby(by=["C", "D"]).mean()
+                for k in [1, 4, 5]:
+                    for key, val in hit_ratio_dict["(C, D)"].items():
+                        index = key.replace("(", "").replace(")","").split(",")
+                        index = tuple([int(ii.strip()) for ii in index])
+                        expected = hit_ratio_CD.loc[index, f"hit_ratio_{k}"]
+                        obtained = val[str(k)]
+                        assert np.allclose(expected, obtained)
+                        

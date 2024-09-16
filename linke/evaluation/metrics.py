@@ -11,6 +11,7 @@ from typing import (
     Tuple,
     Iterable,
 )
+import copy
 from itertools import zip_longest
 from collections import Counter
 import numpy as np
@@ -50,6 +51,7 @@ class TopKMetricPreprocessor(beam.DoFn):
         prediction_key: str = DEFAULT_PREDICTION_KEY,
         label_key: str = DEFAULT_LABEL_KEY,
         weight_key: str = None,
+        group_keys: List[List[str]] = None,
     ):
         super().__init__()
         self.top_k = [top_k] if isinstance(top_k, int) else top_k
@@ -57,6 +59,7 @@ class TopKMetricPreprocessor(beam.DoFn):
         self.prediction_key = prediction_key or DEFAULT_PREDICTION_KEY
         self.label_key = label_key or DEFAULT_LABEL_KEY
         self.weight_key = weight_key
+        self.group_keys = group_keys
 
     @staticmethod
     def sparse_to_dense(
@@ -242,6 +245,30 @@ class TopKMetricPreprocessor(beam.DoFn):
         label: sparray = label
         return label.tocsr().data
 
+    def with_group_keys(self, group_keys: Optional[List[str]] = None):
+        if not group_keys:
+            return self
+        instance = copy.deepcopy(self)
+        instance.group_keys = group_keys
+        return instance
+
+    def acccumulate_metric(self, element):
+        """To be overwritten."""
+        return element
+
+    def process(self, element: Dict):
+        output = self.accumulate_metric(element)
+        if self.group_keys:
+            feature = element[self.feature_key]
+            groupbys = []
+            # Attempt to attach multiple grouping keys
+            for keys in self.group_keys:
+                groupby = [feature[key][0] for key in keys]
+                groupbys.append(tuple(groupby))
+            # Add group keys
+            output = (tuple(groupbys), output)
+        yield output
+
 
 # %% Sample-wise Metrics
 class SampleTopKMetricCombiner(beam.CombineFn):
@@ -292,9 +319,9 @@ class SampleTopKMetricCombiner(beam.CombineFn):
 class _HitRatioTopKPreprocessor(TopKMetricPreprocessor):
     """Hit Ratio computation logic."""
 
-    def process(
+    def accumulate_metric(
         self, element: Dict[str, Any]
-    ) -> Generator[Tuple[Dict, int], None, None]:
+    ) -> Tuple[Dict, int]:
         """Generator function for beam.DoFn"""
         # dense tensor, int or str, (batch_size, None)
         y_pred: np.ndarray = element[self.prediction_key]
@@ -318,7 +345,7 @@ class _HitRatioTopKPreprocessor(TopKMetricPreprocessor):
                 returns="count",
             )
             metrics[k] = (y_intersect > 0).sum()
-        yield metrics, len(y_pred)
+        return metrics, len(y_pred)
 
 
 class HitRatioTopK(BaseMetric):
@@ -360,9 +387,9 @@ class HitRatioTopK(BaseMetric):
 class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
     """NDCG computation logic."""
 
-    def process(
+    def accumulate_metric(
         self, element: Dict[str, Any]
-    ) -> Generator[Tuple[Dict, int], None, None]:
+    ) -> Tuple[Dict, int]:
         # dense tensor, int or str, (batch_size, None)
         y_pred: np.ndarray = element[self.prediction_key]
         # dense or sparse tensor, int or str
@@ -402,7 +429,7 @@ class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
             ndcg = dcg / np.where(idcg < 1e-6, 1.0, idcg)
             metrics[k] = ndcg.sum()  # accumulate
 
-        yield metrics, len(y_pred)
+        return metrics, len(y_pred)
 
 
 class NDCGTopK(BaseMetric):
@@ -473,9 +500,9 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
         # "label", "prediction", or "{feature_name}"
         self.vocabulary_fields = vocabulary_fields
 
-    def process(
+    def accumulate_metric(
         self, element: Dict[str, Any]
-    ) -> Generator[Tuple[Dict, int], None, None]:
+    ) -> Tuple[Dict, int]:
         results, _vocab = {}, set()
         y_pred: np.ndarray = element[self.prediction_key]
         if "prediction" in self.vocabulary_fields:
@@ -515,7 +542,7 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
         # Aggregate on the estimated vocab as well
         if self.vocabulary_fields:
             results["_vocab"] = Counter(_vocab)
-        yield results, num
+        return results, num
 
 
 class PopulationTopKMetricCombiner(beam.CombineFn):
@@ -708,12 +735,12 @@ class RedundacyTopK(BaseMetric):
     Given top-k recommendations, there should be
     num_examples x top_k available slots. Redundancy
     is then calcualted as
-    
+
     1 - num_unique_items / (num_examples x top_k)
-    
+
     The division term computes the proportion of
     slots that contains unique items. The higher this
-    number, the more redundancy there is in the 
+    number, the more redundancy there is in the
     recommenation.
     """
 
@@ -744,10 +771,12 @@ class RedundacyTopK(BaseMetric):
             ),
         )
 
+
 # %% Approximate Count Metrics
 class ApproximateUniqueCountCombiner:
     """
-    Approximate distinct count combiner for 
+    Approximate distinct count combiner for
     personalized recommendation patterns.
     """
+
     pass

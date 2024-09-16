@@ -3,6 +3,7 @@ import importlib
 from dataclasses import dataclass
 from typing import (
     List,
+    Tuple,
     Dict,
     Any,
     Optional,
@@ -13,6 +14,7 @@ from typing import (
     Literal,
     ClassVar,
 )
+import numpy as np
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from linke.dataset.beam_data_processor.beam_data_processor import (
@@ -160,6 +162,7 @@ class ModelInferenceDoFn(DataProcessingDoFn):
         output_label_key: str = DEFAULT_LABEL_KEY,
         output_prediction_key: str = DEFAULT_PREDICTION_KEY,
         output_feature_key: str = DEFAULT_FEATURE_KEY,
+        batched_output: bool = True,
     ):
         self.label_key = label_key
         self.label_transform_fn = (
@@ -175,6 +178,7 @@ class ModelInferenceDoFn(DataProcessingDoFn):
         self.output_label_key = output_label_key
         self.output_prediction_key = output_prediction_key
         self.output_feature_key = output_feature_key
+        self.batched_output = batched_output
         super(ModelInferenceDoFn, self).__init__(
             processing_fn=inference_fn, setup_fn=setup_fn, config=config
         )
@@ -194,16 +198,35 @@ class ModelInferenceDoFn(DataProcessingDoFn):
                 predictions, self.config
             )
         # Make output to be used by metric calculation
-        output = {
-            self.output_feature_key: element,
-            self.output_prediction_key: predictions,
-            self.output_label_key: labels,
-        }
-        yield output
+        if self.batched_output:
+            output = {
+                self.output_feature_key: element,
+                self.output_prediction_key: predictions,
+                self.output_label_key: labels,
+            }
+            yield output
+        else:  # unbatched output, batch size 1
+            for ii in range(len(predictions)):
+                output = {
+                    self.output_feature_key: {
+                        k: v[ii : ii + 1] for k, v in element.items()
+                    },
+                    self.output_prediction_key: predictions[
+                        ii : ii + 1
+                    ],
+                    self.output_label_key: labels[ii : ii + 1],
+                }
+                # yield one element at a time
+                yield output
 
 
 # %% Metric writer
 class CombineToJson(beam.CombineFn):
+    def __init__(
+        self, output_format: Literal["string", "dict"] = "string"
+    ):
+        self.output_format = output_format
+
     def create_accumulator(self):
         return {}  # start with an empty list
 
@@ -219,7 +242,103 @@ class CombineToJson(beam.CombineFn):
 
     def extract_output(self, accumulator):
         # convert list to JSON string
-        return json.dumps(accumulator, indent=4)
+        if self.output_format == "string":
+            return json.dumps(accumulator, indent=4)
+        else:  # dict
+            return accumulator
+
+
+class EvaluateMetric(beam.PTransform):
+    """Evaluate a single metric."""
+
+    def __init__(
+        self,
+        metric: MetricSpec,
+        group_keys: Optional[List[List[str]]] = None,
+    ):
+        self.metric = metric
+        self.group_keys = group_keys
+
+    @staticmethod
+    def _clean_key(key: Union[List, Tuple, str]):
+        if isinstance(key, str):
+            return key.replace("'", "").replace('"', "")
+        key = tuple(key) if len(key) > 1 else key[0]
+        return str(key).replace("'", "").replace('"', "")
+
+    def _eval_metric_group(self, pcoll, group_name: str, index: int):
+        """Evaluate the metric on specific feature group by slices."""
+        if group_name == "":  # global key
+            _extract_key = lambda _: ""
+        else:
+            _extract_key = lambda x: self._clean_key(x[index])
+        return (
+            pcoll
+            | f"Extract key {self.metric.name} {group_name}"
+            >> beam.Map(lambda x: (_extract_key(x[0]), x[1]))
+            | f"Combine slice {self.metric.name} {group_name}"
+            >> beam.CombinePerKey(self.metric.metric.combiner)
+            | f"Label {self.metric.name} {group_name} values"
+            >> beam.Map(lambda x: {x[0]: x[1]})
+            | f"Merge {self.metric.name} {group_name} slice groups"
+            >> beam.CombineGlobally(CombineToJson("dict"))
+            | f"Label {self.metric.name} {group_name} group"
+            >> beam.Map(lambda x: {group_name: x})
+        )
+
+    def expand(self, pcoll: beam.PCollection) -> beam.PCollection:
+        """Evaluate a single metric"""
+        if not self.group_keys:  # combine globally
+            for preprocessor in self.metric.metric.preprocessors:
+                pcoll = (
+                    pcoll
+                    | f"Compute {self.metric.name}"
+                    >> beam.ParDo(preprocessor)
+                )
+            pcoll_combine = (
+                pcoll
+                | f"Combine {self.metric.name}"
+                >> beam.CombineGlobally(self.metric.metric.combiner)
+            )
+        else:  # compute metrics by slice
+            for preprocessor in self.metric.metric.preprocessors:
+                pcoll = (
+                    pcoll
+                    | f"Compute {self.metric.name}"
+                    >> beam.ParDo(
+                        preprocessor.with_group_keys(self.group_keys)
+                        if hasattr(preprocessor, "with_group_keys")
+                        else preprocessor
+                    )
+                )
+
+            metric_groups = []
+            for ii, keys in enumerate(self.group_keys):
+                group_name = self._clean_key(keys)
+                metric_groups.append(
+                    self._eval_metric_group(pcoll, group_name, ii)
+                )
+
+            # Use of of the groups to compute the global result
+            metric_groups.append(self._eval_metric_group(pcoll, "", -1))
+
+            # Merge all groups into a single dictionary
+            pcoll_combine = (
+                tuple(metric_groups)
+                | f"Flatten {self.metric.name} all groups"
+                >> beam.Flatten()
+                | f"Combine {self.metric.name} all groups"
+                >> beam.CombineGlobally(CombineToJson("dict"))
+            )
+
+        # Wrap the current metric with a name key
+        pcoll_labeled = (
+            pcoll_combine
+            | f"Label {self.metric.name}"
+            >> beam.Map(lambda x: {self.metric.name: x})
+        )
+
+        return pcoll_labeled
 
 
 class MetricWriter(beam.PTransform):
@@ -318,7 +437,7 @@ def _determine_blessing(
                 explain,
             )
     blessing = {
-        "blessed": is_blessed,
+        "is_blessed": is_blessed,
         "explanations": (
             explanations if explanations else "No metric thresholds"
         ),
@@ -339,9 +458,9 @@ def create_evaluation_pipeline(
     # Combine keys
     # (whether or not compute metrics globally or per slice)
     if eval_config.data.slices is None:
-        combine_keys = None
+        group_keys = None
     else:
-        combine_keys = [
+        group_keys = [
             s.feature_keys
             for s in eval_config.data.slices
             if s and s.feature_keys
@@ -363,54 +482,27 @@ def create_evaluation_pipeline(
                 config={"label_key": eval_config.data.label_key},
                 label_transform_fn=eval_config.model.label_transform_fn,
                 prediction_transform_fn=eval_config.model.prediction_transform_fn,
+                batched_output=group_keys is None,
             )
         )
 
         # Run each metric
-        def _eval(
-            metric: MetricSpec, pcoll: beam.PCollection
-        ) -> beam.PCollection:
-            # Processor(s)
-            for preprocessor in metric.metric.preprocessors:
-                pcoll = pcoll | f"Compute {metric.name}" >> beam.ParDo(
-                    preprocessor
-                )
-            # Combiner
-            if not combine_keys:  # combine globally
-                pcoll = (
-                    pcoll
-                    | f"Combine {metric.name}"
-                    >> beam.CombineGlobally(metric.metric.combiner)
-                )
-            else:  # compute metrics by slice
-                pass
-                # pcoll_group = pcoll
-                # for key in combine_keys:
-                #     pcoll = pcoll_group | beam.CombinePerKey(
-
-                #     )
-
-            # Wrap the current metric with a name key
-            pcoll_labeled = pcoll | f"Label {metric.name}" >> beam.Map(
-                lambda x: {metric.name: x}
-            )
-
-            # # Debug print
-            # pcoll_labeled | f"Print {metric.name}" >> beam.Map(print)
-            # print(pcoll_labeled.__dict__)
-
-            return pcoll_labeled
-
         combined_metrics = []
         for metric in eval_config.metrics:
-            combined_metrics.append(_eval(metric, pcoll_pred))
+            pcoll_combined = (
+                pcoll_pred
+                | f"Evaluate {metric.name}"
+                >> EvaluateMetric(metric, group_keys)
+            )
+            combined_metrics.append(pcoll_combined)
 
         # Combine metrics
         # Necessary need to cast to tuple!
         metric_json = (
             tuple(combined_metrics)
-            | beam.Flatten()
-            | beam.CombineGlobally(CombineToJson())
+            | "Flatten all mertics" >> beam.Flatten()
+            | "Combine all metrics"
+            >> beam.CombineGlobally(CombineToJson())
         )
 
         # Write results
