@@ -13,7 +13,7 @@ from apache_beam.coders import BytesCoder
 from linke.runner.local_runner import LocalPipelineRunner
 # fmt: off
 from linke.dataset.beam_data_processor.beam_data_processor import (
-    create_data_processing_pipeline,
+    run_data_processing_pipeline,
     CsvInputData, CsvOutputData,
     BigQueryInputData, BigQuerySchemaField, BigQueryOutputData,
     TFRecordFeatureSchema, TFRecordInputData, TFRecordOutputData,
@@ -38,7 +38,7 @@ def test_csv_reader_writer():
 
     with tempfile.TemporaryDirectory() as temp_dir:
         output_file = os.path.join(temp_dir, "output")
-        create_data_processing_pipeline(
+        run_data_processing_pipeline(
             input_data=CsvInputData(file=input_file, batch_size=2),
             output_data=CsvOutputData(
                 file=output_file,
@@ -159,7 +159,7 @@ def test_bigquery_reader_writer():
         ),
     ]
 
-    create_data_processing_pipeline(
+    run_data_processing_pipeline(
         input_data=BigQueryInputData(sql=query, batch_size=3),
         output_data=BigQueryOutputData(
             output_table="rinoa-core-prod.temp_dataset.test_beam_writer",
@@ -182,7 +182,7 @@ def test_tfrecord_reader_writer():
     )
     with tempfile.TemporaryDirectory() as temp_dir:
         output_file = os.path.join(temp_dir, "output")
-        create_data_processing_pipeline(
+        run_data_processing_pipeline(
             input_data=TFRecordInputData(
                 file=input_file,
                 format="feature",
@@ -239,7 +239,7 @@ def test_parquet_reader_writer():
     with tempfile.TemporaryDirectory() as temp_dir:
         output_file = os.path.join(temp_dir, "output")
         # output_file = "./data/output.parquet"
-        create_data_processing_pipeline(
+        run_data_processing_pipeline(
             input_data=ParquetInputData(
                 file=input_file,
                 format="dict",

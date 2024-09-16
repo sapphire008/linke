@@ -384,7 +384,7 @@ def set_nested_value(my_dict, path, value):
             current = current[key]
 
 
-def _determine_blessing(
+def determine_blessing(
     metric_results: Dict, metrics_specs: List[MetricSpec]
 ):
     # by default, if no threshold is specified,
@@ -445,13 +445,13 @@ def _determine_blessing(
     return blessing
 
 
-def create_evaluation_pipeline(
+def run_evaluation_pipeline(
     eval_config: EvalConfig,
     metric_result: str,
     blessing_result: str = None,
     beam_pipeline_args: List[str] = ["--runner=DirectRunner"],
 ):
-
+    """Create and run the evaluation pipeline."""
     # Validate
     _validate_metric_names(eval_config.metrics)
 
@@ -497,8 +497,8 @@ def create_evaluation_pipeline(
             combined_metrics.append(pcoll_combined)
 
         # Combine metrics
-        # Necessary need to cast to tuple!
         metric_json = (
+            # Necessary need to cast to tuple!
             tuple(combined_metrics)
             | "Flatten all mertics" >> beam.Flatten()
             | "Combine all metrics"
@@ -517,12 +517,12 @@ def create_evaluation_pipeline(
             metric_json
             | "Determine blessing"
             >> beam.Map(
-                lambda x: _determine_blessing(
+                lambda x: determine_blessing(
                     json.loads(x), eval_config.metrics
                 )
             )
-            | "Blessing to String" >> beam.Map(lambda x: json.dumps(x))
-            | "Write Blessing"
+            | "Blessing to string" >> beam.Map(lambda x: json.dumps(x))
+            | "Write blessing"
             >> beam.io.WriteToText(
                 blessing_result,
                 num_shards=1,

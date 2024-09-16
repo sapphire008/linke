@@ -1101,7 +1101,7 @@ class BatchWriter(beam.PTransform):
 
 
 # %% Pipeline run function
-def create_data_processing_pipeline(
+def run_data_processing_pipeline(
     input_data: BaseInputData,
     output_data: BaseOutputData,
     processing_fn: str,

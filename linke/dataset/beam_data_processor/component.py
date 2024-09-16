@@ -20,7 +20,7 @@ def beam_data_processing_component(
     # Importing all the helper functions
     import os
     from linke.dataset.beam_data_processor.beam_data_processor import (
-        create_data_processing_pipeline,
+        run_data_processing_pipeline,
         BaseData,
     )
 
@@ -45,7 +45,7 @@ def beam_data_processing_component(
         assert output_data_obj.file is not None, "Need to specify the output file name when not use_output_artifact = False"
 
     # Call the data processor
-    create_data_processing_pipeline(
+    run_data_processing_pipeline(
         input_data=input_data_obj,
         output_data=output_data_obj,
         processing_fn=processing_fn,
