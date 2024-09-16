@@ -21,6 +21,7 @@ from linke.evaluation.evaluator import (
 
 from pdb import set_trace
 import warnings
+
 warnings.filterwarnings("ignore")
 
 
@@ -29,13 +30,14 @@ def label_transform_fn(labels, config={}):
     transformed_labels = []
     for val in labels:
         label = [alphabet[ii] for ii in range(val)]
-        np.random.RandomState(val+42).shuffle(label)
+        np.random.RandomState(val + 42).shuffle(label)
         transformed_labels.append(label)
     return transformed_labels
 
+
 def inference_fn(inputs, config={}):
     alphabet = "abcdefghijk"
-    predictions = []     
+    predictions = []
     # Faking predictions
     for index in inputs["A"]:
         prediction = list(alphabet)
@@ -43,6 +45,7 @@ def inference_fn(inputs, config={}):
         predictions.append(prediction)
     predictions = np.array(predictions)
     return predictions
+
 
 def setup_fn():
     return {}
@@ -53,10 +56,11 @@ class TestEvaluator:
         self.data_spec = DataSpec(
             input_data=CsvInputData(
                 # Not really doing anything
-                file="linke/tests/data/input.csv", batch_size=2
+                file="linke/tests/data/input.csv",
+                batch_size=2,
             ),
             label_key="E",
-            slices = None,
+            slices=None,
         )
         self.model_spec = ModelSpec(
             name="model_1",
@@ -75,14 +79,16 @@ class TestEvaluator:
             metric="linke.evaluation.metrics.NDCGTopK",
             config={"top_k": [1, 4, 5]},
         )
-    
+
     @pytest.mark.skip(reason="")
     def test_evaluation_pipeline(self):
         """Test evaluation pipeline from end-to-end."""
         with tempfile.TemporaryDirectory() as temp_dir:
             # temp_dir = "./"
             metric_result = os.path.join(temp_dir, "metric_result.json")
-            blessing_result = os.path.join(temp_dir, "blessing_result.json")
+            blessing_result = os.path.join(
+                temp_dir, "blessing_result.json"
+            )
             run_evaluation_pipeline(
                 eval_config=EvalConfig(
                     model=self.model_spec,
@@ -91,34 +97,50 @@ class TestEvaluator:
                 ),
                 metric_result=metric_result,
                 blessing_result=blessing_result,
-                beam_pipeline_args=["--runner=DirectRunner"]
+                beam_pipeline_args=["--runner=DirectRunner"],
             )
             # Check results
             with open(metric_result, "r") as fid:
                 result = json.load(fid)
                 assert "ndcg" in result
                 assert "hit_ratio" in result
-                assert all([str(k) in result["ndcg"] for k in self.metric_ndcg.metric.combiner.top_k])
-                assert all([str(k) in result["hit_ratio"] for k in self.metric_ndcg.metric.combiner.top_k])
+                assert all(
+                    [
+                        str(k) in result["ndcg"]
+                        for k in self.metric_ndcg.metric.combiner.top_k
+                    ]
+                )
+                assert all(
+                    [
+                        str(k) in result["hit_ratio"]
+                        for k in self.metric_ndcg.metric.combiner.top_k
+                    ]
+                )
             with open(blessing_result, "r") as fid:
                 blessing = json.load(fid)
                 assert blessing.get("is_blessed") == True
                 assert isinstance(blessing.get("explanations"), str)
-    
+
     @pytest.mark.skip(reason="")
     def test_sliced_evaluation_pipeline(self):
         data_path = "linke/tests/data/input.csv"
         data_spec = DataSpec(
             input_data=CsvInputData(
                 # Not really doing anything
-                file=data_path, batch_size=2
+                file=data_path,
+                batch_size=2,
             ),
             label_key="E",
-            slices = [SliceConfig(feature_keys=["B"]), SliceConfig(feature_keys=["C", "D"])],
+            slices=[
+                SliceConfig(feature_keys=["B"]),
+                SliceConfig(feature_keys=["C", "D"]),
+            ],
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             metric_result = os.path.join(temp_dir, "metric_result.json")
-            blessing_result = os.path.join(temp_dir, "blessing_result.json")
+            blessing_result = os.path.join(
+                temp_dir, "blessing_result.json"
+            )
             run_evaluation_pipeline(
                 eval_config=EvalConfig(
                     model=self.model_spec,
@@ -127,7 +149,7 @@ class TestEvaluator:
                 ),
                 metric_result=metric_result,
                 blessing_result=blessing_result,
-                beam_pipeline_args=["--runner=DirectRunner"]
+                beam_pipeline_args=["--runner=DirectRunner"],
             )
             # Create expected results for hit_ratio
             df = pd.read_csv(data_path)
@@ -136,10 +158,14 @@ class TestEvaluator:
             for k in [1, 4, 5]:
                 hit_ratios = [
                     len(set(pred).intersection(set(lab))) > 0
-                    for pred, lab in zip(predictions[:, :k], transformed_labels)
+                    for pred, lab in zip(
+                        predictions[:, :k], transformed_labels
+                    )
                 ]
-                df[f"hit_ratio_{k}"] = np.array(hit_ratios).astype(float)
-                        
+                df[f"hit_ratio_{k}"] = np.array(hit_ratios).astype(
+                    float
+                )
+
             # Check results
             with open(metric_result, "r") as fid:
                 result = json.load(fid)
@@ -150,24 +176,34 @@ class TestEvaluator:
                 for k in [1, 4, 5]:
                     # Check global
                     hit_ratio_global = df[f"hit_ratio_{k}"].mean()
-                    assert np.allclose(hit_ratio_global, hit_ratio_dict[""][""][str(k)])
+                    assert np.allclose(
+                        hit_ratio_global, hit_ratio_dict[""][""][str(k)]
+                    )
                 # Check the first partition
                 hit_ratio_B = df.groupby(by="B").mean()
                 for k in [1, 4, 5]:
                     for key, val in hit_ratio_dict["B"].items():
-                        expected = hit_ratio_B.loc[int(key), f"hit_ratio_{k}"]
+                        expected = hit_ratio_B.loc[
+                            int(key), f"hit_ratio_{k}"
+                        ]
                         obtained = val[str(k)]
                         assert np.allclose(expected, obtained)
-                        
+
                 hit_ratio_CD = df.groupby(by=["C", "D"]).mean()
                 for k in [1, 4, 5]:
                     for key, val in hit_ratio_dict["(C, D)"].items():
-                        index = key.replace("(", "").replace(")","").split(",")
+                        index = (
+                            key.replace("(", "")
+                            .replace(")", "")
+                            .split(",")
+                        )
                         index = tuple([int(ii.strip()) for ii in index])
-                        expected = hit_ratio_CD.loc[index, f"hit_ratio_{k}"]
+                        expected = hit_ratio_CD.loc[
+                            index, f"hit_ratio_{k}"
+                        ]
                         obtained = val[str(k)]
                         assert np.allclose(expected, obtained)
-                        
+
     def test_determine_blessing(self):
         # Mocking a metric output
         metric_results = {
@@ -179,20 +215,22 @@ class TestEvaluator:
                     "0": {1: 0.31, 4: 0.62, 5: 0.75},
                     "1": {1: 0.24, 4: 0.37, 5: 0.64},
                     "3": {1: 0.11, 4: 0.27, 5: 0.53},
-                }
+                },
             }
         }
         metric_spec = copy.deepcopy(self.metric_hit_ratio)
         metric_spec.thresholds = [
-                # Only lower bound: pass
-                MetricThreshold(["B", "0", 1], lower=0.10),
-                # needs to be in-between: pass
-                MetricThreshold(["B", "0", 4], lower=0.27, upper=0.75),
-                # needs to be in-between: fail
-                MetricThreshold(["B", "0", 5], lower=0.27, upper=0.65)
-            ]
-        
-        blessing_results = determine_blessing(metric_results, [metric_spec])
+            # Only lower bound: pass
+            MetricThreshold(["B", "0", 1], lower=0.10),
+            # needs to be in-between: pass
+            MetricThreshold(["B", "0", 4], lower=0.27, upper=0.75),
+            # needs to be in-between: fail
+            MetricThreshold(["B", "0", 5], lower=0.27, upper=0.65),
+        ]
+
+        blessing_results = determine_blessing(
+            metric_results, [metric_spec]
+        )
         assert blessing_results["is_blessed"] == False
         field = blessing_results["explanations"]["hit_ratio"]["B"]["0"]
         expectation = {1: "(Passed)", 4: "(Passed)", 5: "(Failed)"}
