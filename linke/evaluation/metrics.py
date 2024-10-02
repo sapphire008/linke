@@ -326,7 +326,7 @@ class SampleTopKMetricCombiner(beam.CombineFn):
 class _HitRatioTopKPreprocessor(TopKMetricPreprocessor):
     """Hit Ratio computation logic."""
 
-    def accumulate_metric(self, element: Dict[str, Any]) -> Tuple[Dict, int]:
+    def accumulate_metric(self, element: Dict[str, Any]):
         """Generator function for beam.DoFn"""
         # dense tensor, int or str, (batch_size, None)
         y_pred: np.ndarray = element[self.prediction_key]
@@ -350,7 +350,7 @@ class _HitRatioTopKPreprocessor(TopKMetricPreprocessor):
                 returns="count",
             )
             metrics[k] = (y_intersect > 0).sum()
-        return metrics, len(y_pred)
+        yield metrics, len(y_pred)
 
 
 class HitRatioTopK(BaseMetric):
@@ -390,7 +390,7 @@ class HitRatioTopK(BaseMetric):
 class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
     """NDCG computation logic."""
 
-    def accumulate_metric(self, element: Dict[str, Any]) -> Tuple[Dict, int]:
+    def accumulate_metric(self, element: Dict[str, Any]):
         # dense tensor, int or str, (batch_size, None)
         y_pred: np.ndarray = element[self.prediction_key]
         # dense or sparse tensor, int or str
@@ -428,7 +428,7 @@ class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
             ndcg = dcg / np.where(idcg < 1e-6, 1.0, idcg)
             metrics[k] = ndcg.sum()  # accumulate
 
-        return metrics, len(y_pred)
+        yield metrics, len(y_pred)
 
 
 class NDCGTopK(BaseMetric):
@@ -499,7 +499,7 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
         # "label", "prediction", or "{feature_name}"
         self.vocabulary_fields = vocabulary_fields
 
-    def accumulate_metric(self, element: Dict[str, Any]) -> Tuple[Dict, int]:
+    def accumulate_metric(self, element: Dict[str, Any]):
         results, _vocab = {}, set()
         y_pred: np.ndarray = element[self.prediction_key]
         if "prediction" in self.vocabulary_fields:
@@ -536,7 +536,7 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
         # Aggregate on the estimated vocab as well
         if self.vocabulary_fields:
             results["_vocab"] = Counter(_vocab)
-        return results, num
+        yield results, num
 
 
 class PopulationTopKMetricCombiner(beam.CombineFn):

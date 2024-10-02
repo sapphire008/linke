@@ -82,18 +82,16 @@ class TestEvaluator:
         self.metric_unqiue_count = MetricSpec(
             name="unique_count",
             metric="linke.evaluation.metrics.UniqueCountTopK",
-            config={"top_k": [1, 4, 5]}
+            config={"top_k": [1, 4, 5]},
         )
 
-    @pytest.mark.skip(reason="")
+    # @pytest.mark.skip(reason="")
     def test_evaluation_pipeline(self):
         """Test evaluation pipeline from end-to-end."""
         with tempfile.TemporaryDirectory() as temp_dir:
             # temp_dir = "./"
             metric_result = os.path.join(temp_dir, "metric_result.json")
-            blessing_result = os.path.join(
-                temp_dir, "blessing_result.json"
-            )
+            blessing_result = os.path.join(temp_dir, "blessing_result.json")
             run_evaluation_pipeline(
                 eval_config=EvalConfig(
                     model=self.model_spec,
@@ -126,14 +124,12 @@ class TestEvaluator:
                 assert blessing.get("is_blessed") == True
                 assert isinstance(blessing.get("explanations"), str)
 
-    @pytest.mark.skip(reason="")
+    # @pytest.mark.skip(reason="")
     def test_evaluation_pipeline_keyed_combiner(self):
         """Test evaluation pipeline from end-to-end."""
         with tempfile.TemporaryDirectory() as temp_dir:
             metric_result = os.path.join(temp_dir, "metric_result.json")
-            blessing_result = os.path.join(
-                temp_dir, "blessing_result.json"
-            )
+            blessing_result = os.path.join(temp_dir, "blessing_result.json")
             run_evaluation_pipeline(
                 eval_config=EvalConfig(
                     model=self.model_spec,
@@ -148,16 +144,16 @@ class TestEvaluator:
             with open(metric_result, "r") as fid:
                 result = json.load(fid)
                 assert "unique_count" in result
-                
+
                 assert all(
                     [
                         str(k) in result["unique_count"]
                         for k in self.metric_unqiue_count.metric.combiner
                     ]
                 )
-                assert str(-1) in result["unique_count"] # label
+                assert "label" in result["unique_count"]  # label
 
-    @pytest.mark.skip(reason="")
+    # @pytest.mark.skip(reason="")
     def test_sliced_evaluation_pipeline(self):
         data_path = "linke/tests/data/input.csv"
         data_spec = DataSpec(
@@ -174,9 +170,7 @@ class TestEvaluator:
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             metric_result = os.path.join(temp_dir, "metric_result.json")
-            blessing_result = os.path.join(
-                temp_dir, "blessing_result.json"
-            )
+            blessing_result = os.path.join(temp_dir, "blessing_result.json")
             run_evaluation_pipeline(
                 eval_config=EvalConfig(
                     model=self.model_spec,
@@ -194,13 +188,9 @@ class TestEvaluator:
             for k in [1, 4, 5]:
                 hit_ratios = [
                     len(set(pred).intersection(set(lab))) > 0
-                    for pred, lab in zip(
-                        predictions[:, :k], transformed_labels
-                    )
+                    for pred, lab in zip(predictions[:, :k], transformed_labels)
                 ]
-                df[f"hit_ratio_{k}"] = np.array(hit_ratios).astype(
-                    float
-                )
+                df[f"hit_ratio_{k}"] = np.array(hit_ratios).astype(float)
 
             # Check results
             with open(metric_result, "r") as fid:
@@ -212,31 +202,21 @@ class TestEvaluator:
                 for k in [1, 4, 5]:
                     # Check global
                     hit_ratio_global = df[f"hit_ratio_{k}"].mean()
-                    assert np.allclose(
-                        hit_ratio_global, hit_ratio_dict[""][""][str(k)]
-                    )
+                    assert np.allclose(hit_ratio_global, hit_ratio_dict[""][""][str(k)])
                 # Check the first partition
                 hit_ratio_B = df.groupby(by="B").mean()
                 for k in [1, 4, 5]:
                     for key, val in hit_ratio_dict["B"].items():
-                        expected = hit_ratio_B.loc[
-                            int(key), f"hit_ratio_{k}"
-                        ]
+                        expected = hit_ratio_B.loc[int(key), f"hit_ratio_{k}"]
                         obtained = val[str(k)]
                         assert np.allclose(expected, obtained)
 
                 hit_ratio_CD = df.groupby(by=["C", "D"]).mean()
                 for k in [1, 4, 5]:
                     for key, val in hit_ratio_dict["(C, D)"].items():
-                        index = (
-                            key.replace("(", "")
-                            .replace(")", "")
-                            .split(",")
-                        )
+                        index = key.replace("(", "").replace(")", "").split(",")
                         index = tuple([int(ii.strip()) for ii in index])
-                        expected = hit_ratio_CD.loc[
-                            index, f"hit_ratio_{k}"
-                        ]
+                        expected = hit_ratio_CD.loc[index, f"hit_ratio_{k}"]
                         obtained = val[str(k)]
                         assert np.allclose(expected, obtained)
 
@@ -255,11 +235,8 @@ class TestEvaluator:
             ],
         )
         with tempfile.TemporaryDirectory() as temp_dir:
-            temp_dir = "./"
             metric_result = os.path.join(temp_dir, "metric_result.json")
-            blessing_result = os.path.join(
-                temp_dir, "blessing_result.json"
-            )
+            blessing_result = os.path.join(temp_dir, "blessing_result.json")
             run_evaluation_pipeline(
                 eval_config=EvalConfig(
                     model=self.model_spec,
@@ -270,20 +247,15 @@ class TestEvaluator:
                 blessing_result=blessing_result,
                 beam_pipeline_args=["--runner=DirectRunner"],
             )
-            # # Create expected results for hit_ratio
-            # df = pd.read_csv(data_path)
-            # predictions = inference_fn(df)
-            # transformed_labels = label_transform_fn(df["E"])
-            # for k in [1, 4, 5]:
-            #     hit_ratios = [
-            #         len(set(pred).intersection(set(lab))) > 0
-            #         for pred, lab in zip(
-            #             predictions[:, :k], transformed_labels
-            #         )
-            #     ]
-            #     df[f"hit_ratio_{k}"] = np.array(hit_ratios).astype(
-            #         float
-            #     )
+            with open(metric_result, "r") as fid:
+                result = json.load(fid)
+                assert "unique_count" in result
+                assert all(
+                    [
+                        str(k) in result["unique_count"]["(C, D)"]["(2, 4)"]
+                        for k in self.metric_unqiue_count.metric.combiner
+                    ]
+                )
 
     def test_determine_blessing(self):
         # Mocking a metric output
@@ -309,9 +281,7 @@ class TestEvaluator:
             MetricThreshold(["B", "0", 5], lower=0.27, upper=0.65),
         ]
 
-        blessing_results = determine_blessing(
-            metric_results, [metric_spec]
-        )
+        blessing_results = determine_blessing(metric_results, [metric_spec])
         assert blessing_results["is_blessed"] == False
         field = blessing_results["explanations"]["hit_ratio"]["B"]["0"]
         expectation = {1: "(Passed)", 4: "(Passed)", 5: "(Failed)"}
