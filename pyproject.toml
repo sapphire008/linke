@@ -19,12 +19,10 @@ tensorflow-metadata = "1.15.0"
 protobuf = "4.25.3"
 scipy = "1.14.1"
 
-# Install extra dependencies using --with gcp
 [tool.poetry.group.gcp.dependencies]
 apache-beam = {extras = ["gcp"], version = "2.57.0"}
 feast = {extras = ["gcp"], version = "0.40.0"}
 
-# Install extra dependenceis using --with torch
 [tool.poetry.group.torch.dependencies]
 torch = "2.4.0"
 torchserve = "0.11.1"
@@ -32,11 +30,17 @@ torch-model-archiver = "0.11.1"
 nvgpu = "0.10.0"
 webdataset = "0.2.100"
 
+[tool.poetry.group.ray.dependencies]
+ray = "2.37.0"
+
 [tool.poetry.group.dev.dependencies]
 black = "24.4.2"
 pytest = "^8.2.2"
 spyder-kernels = "3.0.0"
 grpcio-tools = "1.62.2"
+
+
+
 
 [build-system]
 requires = ["poetry-core"]
