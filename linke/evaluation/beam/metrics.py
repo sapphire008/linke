@@ -703,65 +703,6 @@ class CoverageTopK(BaseMetric):
         )
 
 
-class _RedundancyTopKCombiner(PopulationTopKMetricCombiner):
-    def extract_output(
-        self, accumulator: Tuple[Dict[int, float], int]
-    ) -> Dict[int, float]:
-        accumulator, num = accumulator
-
-        # Compute coverage
-        coverage = {}
-        for k in accumulator:
-            try:
-                k = int(k)  # assuming k is top_k integer
-            except:
-                continue
-            covered = accumulator[k].keys()
-            coverage[k] = 1 - len(covered) / (num * k)
-        return coverage
-
-
-class RedundacyTopK(BaseMetric):
-    """Redundancy metric.
-    Given top-k recommendations, there should be
-    num_examples x top_k available slots. Redundancy
-    is then calcualted as
-
-    1 - num_unique_items / (num_examples x top_k)
-
-    The division term computes the proportion of
-    slots that contains unique items. The higher this
-    number, the more redundancy there is in the
-    recommenation.
-    """
-
-    def __init__(
-        self,
-        top_k: Union[int, List[int]],
-        prediction_key: str = DEFAULT_PREDICTION_KEY,
-    ):
-        """
-        Args:
-            top_k (Union[int, List[int]]): Top-k of predictions
-                used to compute coverage.
-        """
-        top_k = [top_k] if isinstance(top_k, int) else top_k
-        super(RedundacyTopK, self).__init__(
-            name="redundancy",
-            preprocessors=[
-                PopulationTopKMetricPreprocessor(
-                    top_k=top_k,
-                    prediction_key=prediction_key,
-                    other_fields=[],
-                    vocabulary_fields=[],
-                )
-            ],
-            combiner=_RedundancyTopKCombiner(
-                metric_key="redundancy",
-                top_k=top_k,
-            ),
-        )
-
 
 # %% Approximate Count Metrics
 
