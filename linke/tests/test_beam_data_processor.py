@@ -12,7 +12,7 @@ from apache_beam.io.tfrecordio import _TFRecordUtil
 from apache_beam.coders import BytesCoder
 from linke.runner.local_runner import LocalPipelineRunner
 # fmt: off
-from linke.dataset.beam_data_processor.beam_data_processor import (
+from linke.dataset.beam.data_processor import (
     run_data_processing_pipeline,
     CsvInputData, CsvOutputData,
     BigQueryInputData, BigQuerySchemaField, BigQueryOutputData,
@@ -20,10 +20,10 @@ from linke.dataset.beam_data_processor.beam_data_processor import (
     ParquetSchemaField, ParquetInputData, ParquetOutputData,
 )
 # fmt: on
-from linke.dataset.beam_data_processor.component import (
+from linke.dataset.beam.component import (
     beam_data_processing_component,
 )
-from linke.dataset.beam_data_processor.utils import (
+from linke.dataset.beam.utils import (
     TFRecordIOUtils,
 )
 from pdb import set_trace

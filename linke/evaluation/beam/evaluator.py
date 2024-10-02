@@ -17,7 +17,7 @@ from typing import (
 import numpy as np
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
-from linke.dataset.beam_data_processor.beam_data_processor import (
+from linke.dataset.beam.data_processor import (
     BaseInputData,
     BatchReader,
     DataProcessingDoFn,

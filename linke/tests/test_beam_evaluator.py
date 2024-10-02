@@ -5,7 +5,7 @@ import tempfile
 import copy
 import numpy as np
 import pandas as pd
-from linke.dataset.beam_data_processor.beam_data_processor import (
+from linke.dataset.beam.data_processor import (
     CsvInputData,
 )
 from linke.evaluation.beam.evaluator import (
