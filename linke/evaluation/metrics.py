@@ -817,7 +817,8 @@ class _UniqueCountTopKPreprocessor(TopKMetricPreprocessor):
             # initial round of dedup
             results["label"] = y_label.unique().tolist()
         
-        # emitting one result at a time for approximatecountcombiner
+        # emitting one result at a time for 
+        # approximate_count_distinct_combiner
         for k, v in results.items():
             for vv in v:
                 yield {k: vv}
