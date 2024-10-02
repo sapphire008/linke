@@ -79,6 +79,11 @@ class TestEvaluator:
             metric="linke.evaluation.metrics.NDCGTopK",
             config={"top_k": [1, 4, 5]},
         )
+        self.metric_unqiue_count = MetricSpec(
+            name="unique_count",
+            metric="linke.evaluation.metrics.UniqueCountTopK",
+            config={"top_k": [1, 4, 5]}
+        )
 
     @pytest.mark.skip(reason="")
     def test_evaluation_pipeline(self):
@@ -120,6 +125,37 @@ class TestEvaluator:
                 blessing = json.load(fid)
                 assert blessing.get("is_blessed") == True
                 assert isinstance(blessing.get("explanations"), str)
+
+    @pytest.mark.skip(reason="")
+    def test_evaluation_pipeline_keyed_combiner(self):
+        """Test evaluation pipeline from end-to-end."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metric_result = os.path.join(temp_dir, "metric_result.json")
+            blessing_result = os.path.join(
+                temp_dir, "blessing_result.json"
+            )
+            run_evaluation_pipeline(
+                eval_config=EvalConfig(
+                    model=self.model_spec,
+                    metrics=[self.metric_unqiue_count],
+                    data=self.data_spec,
+                ),
+                metric_result=metric_result,
+                blessing_result=blessing_result,
+                beam_pipeline_args=["--runner=DirectRunner"],
+            )
+            # Check results
+            with open(metric_result, "r") as fid:
+                result = json.load(fid)
+                assert "unique_count" in result
+                
+                assert all(
+                    [
+                        str(k) in result["unique_count"]
+                        for k in self.metric_unqiue_count.metric.combiner
+                    ]
+                )
+                assert str(-1) in result["unique_count"] # label
 
     @pytest.mark.skip(reason="")
     def test_sliced_evaluation_pipeline(self):
@@ -203,6 +239,51 @@ class TestEvaluator:
                         ]
                         obtained = val[str(k)]
                         assert np.allclose(expected, obtained)
+
+    def test_sliced_evaluation_pipeline_keyed_combiner(self):
+        data_path = "linke/tests/data/input.csv"
+        data_spec = DataSpec(
+            input_data=CsvInputData(
+                # Not really doing anything
+                file=data_path,
+                batch_size=2,
+            ),
+            label_key="E",
+            slices=[
+                SliceConfig(feature_keys=["B"]),
+                SliceConfig(feature_keys=["C", "D"]),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_dir = "./"
+            metric_result = os.path.join(temp_dir, "metric_result.json")
+            blessing_result = os.path.join(
+                temp_dir, "blessing_result.json"
+            )
+            run_evaluation_pipeline(
+                eval_config=EvalConfig(
+                    model=self.model_spec,
+                    metrics=[self.metric_unqiue_count],
+                    data=data_spec,
+                ),
+                metric_result=metric_result,
+                blessing_result=blessing_result,
+                beam_pipeline_args=["--runner=DirectRunner"],
+            )
+            # # Create expected results for hit_ratio
+            # df = pd.read_csv(data_path)
+            # predictions = inference_fn(df)
+            # transformed_labels = label_transform_fn(df["E"])
+            # for k in [1, 4, 5]:
+            #     hit_ratios = [
+            #         len(set(pred).intersection(set(lab))) > 0
+            #         for pred, lab in zip(
+            #             predictions[:, :k], transformed_labels
+            #         )
+            #     ]
+            #     df[f"hit_ratio_{k}"] = np.array(hit_ratios).astype(
+            #         float
+            #     )
 
     def test_determine_blessing(self):
         # Mocking a metric output

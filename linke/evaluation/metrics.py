@@ -15,8 +15,10 @@ import copy
 from itertools import zip_longest
 from collections import Counter
 import numpy as np
+import pandas as pd
 from scipy.sparse import csr_matrix, coo_matrix, sparray
 import apache_beam as beam
+from apache_beam.transforms.stats import ApproximateUnique, ApproximateUniqueCombineFn
 
 from pdb import set_trace
 
@@ -34,10 +36,14 @@ class BaseMetric:
         self,
         name: str,
         preprocessors: Iterable[beam.DoFn],
-        combiner: beam.CombineFn,
+        combiner: Union[beam.CombineFn, Dict[str, beam.CombineFn]],
     ):
         self.name = name
         self.preprocessors = preprocessors
+        # Either a single CombineFn or a dictionary of combine funcs
+        # where the key is corresponding to the key in the output of the
+        # final preprocessor. If this format is used, then the output
+        # of the final preprocessor must be a dictionary.
         self.combiner = combiner
 
 
@@ -53,6 +59,26 @@ class TopKMetricPreprocessor(beam.DoFn):
         weight_key: str = None,
         group_keys: List[List[str]] = None,
     ):
+        """
+        Base class for TopK Metrics
+
+        Args:
+            top_k (Union[int, List[int]]): top k or
+                list of top k to limit the top predictions.
+            feature_key (str, optional): key to the features
+                in the extracted data dictionary.
+                Defaults to DEFAULT_FEATURE_KEY.
+            prediction_key (str, optional): key to the predictions
+                in the extracted data dictionary.
+                Defaults to DEFAULT_PREDICTION_KEY.
+            label_key (str, optional): key to the labels
+                in the extracted data dictionary.
+                Defaults to DEFAULT_LABEL_KEY.
+            weight_key (str, optional): key to the weights
+                in the extracted data dictionary. Defaults to None.
+            group_keys (List[List[str]], optional): list of list of keys
+                to group the aggregation by. Defaults to None.
+        """
         super().__init__()
         self.top_k = [top_k] if isinstance(top_k, int) else top_k
         self.feature_key = feature_key or DEFAULT_FEATURE_KEY
@@ -89,9 +115,7 @@ class TopKMetricPreprocessor(beam.DoFn):
                         f"Unable to handle sparse label with dtype {type(label[0][0])}"
                     )
                 )
-            label = np.array(
-                list(zip_longest(*label, fillvalue=fillvalue))
-            ).T
+            label = np.array(list(zip_longest(*label, fillvalue=fillvalue))).T
             return label, fillvalue
 
         # Create dense tensor label
@@ -103,12 +127,8 @@ class TopKMetricPreprocessor(beam.DoFn):
             else:
                 fillvalue = pad
             label: coo_matrix = label.tocoo()
-            res = np.full(
-                label.shape, fillvalue, dtype=label.data.dtype
-            )
-            np.put(
-                res, label.row * label.shape[1] + label.col, label.data
-            )
+            res = np.full(label.shape, fillvalue, dtype=label.data.dtype)
+            np.put(res, label.row * label.shape[1] + label.col, label.data)
             return res, fillvalue
 
         # For float matrix, use 0 as padding
@@ -121,16 +141,12 @@ class TopKMetricPreprocessor(beam.DoFn):
         ):
             label: coo_matrix = label.tocoo()
             res = np.full(label.shape, "", dtype=label.data.dtype)
-            np.put(
-                res, label.row * label.shape[1] + label.col, label.data
-            )
+            np.put(res, label.row * label.shape[1] + label.col, label.data)
             return res, ""
 
         # Throw exception for all other label dtypes
         raise (
-            TypeError(
-                f"Unable to handle sparse label with dtype {label.data.dtype}"
-            )
+            TypeError(f"Unable to handle sparse label with dtype {label.data.dtype}")
         )
 
     @staticmethod
@@ -138,9 +154,7 @@ class TopKMetricPreprocessor(beam.DoFn):
         x: np.ndarray,
         y: np.ndarray,
         pad: Union[int, str] = None,
-        operation: Literal[
-            "intersection", "union", "difference"
-        ] = "intersection",
+        operation: Literal["intersection", "union", "difference"] = "intersection",
         returns: Literal["count", "matrix"] = "count",
     ):
         """
@@ -162,9 +176,7 @@ class TopKMetricPreprocessor(beam.DoFn):
 
         # Use np.unique to create convert from data -> indices
         # This can appropriately handle all data types, including strings
-        unique, indices = np.unique(
-            np.hstack((x, y)), return_inverse=True
-        )
+        unique, indices = np.unique(np.hstack((x, y)), return_inverse=True)
         n_unique = len(unique)
 
         # From flattened index -> original shape
@@ -252,22 +264,25 @@ class TopKMetricPreprocessor(beam.DoFn):
         instance.group_keys = group_keys
         return instance
 
-    def acccumulate_metric(self, element):
+    def accumulate_metric(self, element):
         """To be overwritten."""
         return element
 
     def process(self, element: Dict):
-        output = self.accumulate_metric(element)
-        if self.group_keys:
-            feature = element[self.feature_key]
-            groupbys = []
-            # Attempt to attach multiple grouping keys
-            for keys in self.group_keys:
-                groupby = [feature[key][0] for key in keys]
-                groupbys.append(tuple(groupby))
-            # Add group keys
-            output = (tuple(groupbys), output)
-        yield output
+        for output in self.accumulate_metric(element):
+            if self.group_keys:
+                # Assuming, when group_keys i not None,
+                # the pipeline from inference only ouputs
+                # one example at a time
+                feature = element[self.feature_key]
+                groupbys = []
+                # Attempt to attach multiple grouping keys
+                for keys in self.group_keys:  # each slice
+                    groupby = [feature[key][0] for key in keys]
+                    groupbys.append(tuple(groupby))
+                # Add group keys
+                output = (tuple(groupbys), output)
+            yield output
 
 
 # %% Sample-wise Metrics
@@ -286,10 +301,7 @@ class SampleTopKMetricCombiner(beam.CombineFn):
         accumulator: Tuple[Dict[int, float], int],
         state: Tuple[Dict[int, float], int],
     ) -> Tuple[Dict[int, float], int]:
-        metrics = {
-            k: accumulator[0].get(k, 0.0) + state[0][k]
-            for k in state[0]
-        }
+        metrics = {k: accumulator[0].get(k, 0.0) + state[0][k] for k in state[0]}
         n = accumulator[1] + state[1]
         return metrics, n
 
@@ -299,10 +311,7 @@ class SampleTopKMetricCombiner(beam.CombineFn):
         accumulators = iter(accumulators)
         result = next(accumulators)  # get the first item
         for accumulator in accumulators:
-            metric = {
-                k: accumulator[0].get(k, 0.0) + result[0][k]
-                for k in result[0]
-            }
+            metric = {k: accumulator[0].get(k, 0.0) + result[0][k] for k in result[0]}
             n = accumulator[1] + result[1]
             result = (metric, n)
         return result
@@ -310,18 +319,14 @@ class SampleTopKMetricCombiner(beam.CombineFn):
     def extract_output(
         self, accumulator: Tuple[Dict[int, float], int]
     ) -> Dict[int, float]:
-        return {
-            k: v / accumulator[1] for k, v in accumulator[0].items()
-        }
+        return {k: v / accumulator[1] for k, v in accumulator[0].items()}
 
 
 # Orderless Metrics
 class _HitRatioTopKPreprocessor(TopKMetricPreprocessor):
     """Hit Ratio computation logic."""
 
-    def accumulate_metric(
-        self, element: Dict[str, Any]
-    ) -> Tuple[Dict, int]:
+    def accumulate_metric(self, element: Dict[str, Any]) -> Tuple[Dict, int]:
         """Generator function for beam.DoFn"""
         # dense tensor, int or str, (batch_size, None)
         y_pred: np.ndarray = element[self.prediction_key]
@@ -375,9 +380,7 @@ class HitRatioTopK(BaseMetric):
                     weight_key=weight_key,
                 )
             ],
-            combiner=SampleTopKMetricCombiner(
-                metric_key="hit_ratio", top_k=top_k
-            ),
+            combiner=SampleTopKMetricCombiner(metric_key="hit_ratio", top_k=top_k),
         )
 
 
@@ -387,9 +390,7 @@ class HitRatioTopK(BaseMetric):
 class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
     """NDCG computation logic."""
 
-    def accumulate_metric(
-        self, element: Dict[str, Any]
-    ) -> Tuple[Dict, int]:
+    def accumulate_metric(self, element: Dict[str, Any]) -> Tuple[Dict, int]:
         # dense tensor, int or str, (batch_size, None)
         y_pred: np.ndarray = element[self.prediction_key]
         # dense or sparse tensor, int or str
@@ -404,9 +405,7 @@ class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
         y_weight: Union[np.ndarray, sparray, List[List], None] = (
             element[self.weight_key]
             if self.weight_key in element
-            else element.get(self.feature_key, {}).get(
-                self.weight_key, None
-            )
+            else element.get(self.feature_key, {}).get(self.weight_key, None)
         )
         if y_weight is not None:
             y_weight, _ = self.sparse_to_dense(y_weight, 0.0)
@@ -452,9 +451,7 @@ class NDCGTopK(BaseMetric):
                     weight_key=weight_key,
                 )
             ],
-            combiner=SampleTopKMetricCombiner(
-                metric_key="ndcg", top_k=top_k
-            ),
+            combiner=SampleTopKMetricCombiner(metric_key="ndcg", top_k=top_k),
         )
 
 
@@ -481,6 +478,7 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
         prediction_key: str = DEFAULT_PREDICTION_KEY,
         label_key: str = DEFAULT_LABEL_KEY,
         weight_key: str = None,
+        group_keys: List[List[str]] = None,
         other_fields: List[str] = [],
         vocabulary_fields: List[str] = [],
     ):
@@ -490,6 +488,7 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
             prediction_key=prediction_key,
             label_key=label_key,
             weight_key=weight_key,
+            group_keys=group_keys,
         )
         # Additional field for accumulation
         # the field shares the vocabulary set of the prediction
@@ -500,9 +499,7 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
         # "label", "prediction", or "{feature_name}"
         self.vocabulary_fields = vocabulary_fields
 
-    def accumulate_metric(
-        self, element: Dict[str, Any]
-    ) -> Tuple[Dict, int]:
+    def accumulate_metric(self, element: Dict[str, Any]) -> Tuple[Dict, int]:
         results, _vocab = {}, set()
         y_pred: np.ndarray = element[self.prediction_key]
         if "prediction" in self.vocabulary_fields:
@@ -511,10 +508,7 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
         for k in self.top_k:
             results[k] = Counter(y_pred[:, :k].ravel())
         # Additional fields for accumulation
-        if (
-            "label" in self.other_fields
-            or "label" in self.vocabulary_fields
-        ):
+        if "label" in self.other_fields or "label" in self.vocabulary_fields:
             y_label: Union[np.ndarray, sparray, List[List]] = (
                 element[self.label_key]
                 if self.label_key in element
@@ -601,8 +595,7 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
                 metrics[k].update(state[0][k])
         else:
             metrics = {
-                k: accumulator[0].get(k, Counter()) + state[0][k]
-                for k in state[0]
+                k: accumulator[0].get(k, Counter()) + state[0][k] for k in state[0]
             }
         n = accumulator[1] + state[1]
         return metrics, n
@@ -686,9 +679,7 @@ class CoverageTopK(BaseMetric):
         """
         top_k = [top_k] if isinstance(top_k, int) else top_k
         vocabulary_fields = (
-            (vocabulary_fields or ["prediction"])
-            if not vocabulary
-            else []
+            (vocabulary_fields or ["prediction"]) if not vocabulary else []
         )
         super(CoverageTopK, self).__init__(
             name="coverage",
@@ -773,10 +764,96 @@ class RedundacyTopK(BaseMetric):
 
 
 # %% Approximate Count Metrics
-class ApproximateUniqueCountCombiner:
-    """
-    Approximate distinct count combiner for
-    personalized recommendation patterns.
-    """
 
-    pass
+
+class _UniqueCountTopKPreprocessor(TopKMetricPreprocessor):
+    def __init__(
+        self,
+        top_k: Union[int, List[int]],
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+        group_keys: List[List[str]] = None,
+        include_labels: bool = True,
+        use_ordered_list: bool = True,
+    ):
+        super(_UniqueCountTopKPreprocessor, self).__init__(
+            top_k=top_k,
+            feature_key=feature_key,
+            prediction_key=prediction_key,
+            label_key=label_key,
+            weight_key=weight_key,
+            group_keys=group_keys,
+        )
+        self.include_labels = include_labels
+        # if true, treat the recommendation as an ordered list
+        # so that even if the same set of contents are recommended
+        # if the ordering of them are different, they will be treated
+        # as a different pattern
+        self.use_ordered_list = use_ordered_list
+
+    def accumulate_metric(self, element):
+        results = {}
+        y_pred: np.ndarray = element[self.prediction_key]
+        for k in self.top_k:
+            pred = y_pred[:, :k]
+            if not self.use_ordered_list:
+                pred = np.sort(pred, axis=1)
+            pred = pd.Series(pred.tolist()).str.join("")
+            # initial round of dedup
+            results[str(k)] = pred.unique().tolist()
+
+        # Process labels
+        if self.include_labels:
+            y_label: Union[np.ndarray, sparray, List[List]] = (
+                element[self.label_key]
+                if self.label_key in element
+                # Attempting to get from the feature
+                else element[self.feature_key][self.label_key]
+            )
+            y_label, _ = self.sparse_to_dense(y_label, pad="")
+            y_label = pd.Series(y_label.tolist()).str.join("")
+            # initial round of dedup
+            results["label"] = y_label.unique().tolist()
+        
+        # emitting one result at a time for approximatecountcombiner
+        for k, v in results.items():
+            for vv in v:
+                yield {k: vv}
+
+
+class UniqueCountTopK(BaseMetric):
+    def __init__(
+        self,
+        top_k: Union[int, List[int]],
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+        error: float = 0.01,
+        include_labels: bool = True,
+        use_ordered_list: bool = True,
+    ):
+        _preprocessor = _UniqueCountTopKPreprocessor(
+            top_k=top_k,
+            feature_key=feature_key,
+            prediction_key=prediction_key,
+            label_key=label_key,
+            weight_key=weight_key,
+            include_labels=include_labels,
+            use_ordered_list=use_ordered_list,
+        )
+        self._sample_size = ApproximateUnique.parse_input_params(None, error)
+
+        super(UniqueCountTopK, self).__init__(
+            name="unique_count",
+            preprocessors=[_preprocessor],
+            # one combiner per output key
+            combiner={
+                str(k): ApproximateUniqueCombineFn(
+                    self._sample_size, coder=beam.coders.StrUtf8Coder()
+                )
+                for k in _preprocessor.top_k + (["label"] if include_labels else [])
+            },
+        )
