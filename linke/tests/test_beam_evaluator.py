@@ -8,7 +8,7 @@ import pandas as pd
 from linke.dataset.beam_data_processor.beam_data_processor import (
     CsvInputData,
 )
-from linke.evaluation.evaluator import (
+from linke.evaluation.beam.evaluator import (
     run_evaluation_pipeline,
     determine_blessing,
     EvalConfig,
@@ -71,17 +71,17 @@ class TestEvaluator:
         # Create metric from module_path
         self.metric_hit_ratio = MetricSpec(
             name="hit_ratio",
-            metric="linke.evaluation.metrics.HitRatioTopK",
+            metric="linke.evaluation.beam.metrics.HitRatioTopK",
             config={"top_k": [1, 4, 5]},
         )
         self.metric_ndcg = MetricSpec(
             name="ndcg",
-            metric="linke.evaluation.metrics.NDCGTopK",
+            metric="linke.evaluation.beam.metrics.NDCGTopK",
             config={"top_k": [1, 4, 5]},
         )
         self.metric_unqiue_count = MetricSpec(
             name="unique_count",
-            metric="linke.evaluation.metrics.UniqueCountTopK",
+            metric="linke.evaluation.beam.metrics.UniqueCountTopK",
             config={"top_k": [1, 4, 5]},
         )
 

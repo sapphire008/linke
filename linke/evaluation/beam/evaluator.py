@@ -22,7 +22,7 @@ from linke.dataset.beam_data_processor.beam_data_processor import (
     BatchReader,
     DataProcessingDoFn,
 )
-from linke.evaluation.metrics import (
+from linke.evaluation.beam.metrics import (
     BaseMetric,
     DEFAULT_FEATURE_KEY,
     DEFAULT_LABEL_KEY,

@@ -4,7 +4,7 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from pdb import set_trace
 
-from linke.evaluation.metrics import (
+from linke.evaluation.beam.metrics import (
     TopKMetricPreprocessor,
     HitRatioTopK,
     _HitRatioTopKPreprocessor,
@@ -18,7 +18,7 @@ from linke.evaluation.metrics import (
     _RedundancyTopKCombiner,
     RedundacyTopK,
 )
-from linke.evaluation.metrics import (
+from linke.evaluation.beam.metrics import (
     DEFAULT_PREDICTION_KEY,
     DEFAULT_LABEL_KEY,
 )
