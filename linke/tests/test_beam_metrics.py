@@ -1,4 +1,6 @@
+import os
 import pytest
+import copy
 from collections import Counter
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -15,15 +17,16 @@ from linke.evaluation.beam.metrics import (
     PopulationTopKMetricPreprocessor,
     _CoverageTopKCombiner,
     CoverageTopK,
-    _RedundancyTopKCombiner,
-    RedundacyTopK,
+    UniqueCountTopK,
+    _UniqueCountTopKPreprocessor,
+    MiscalibrationTopK,
+    _MiscalibrationTopKPreprocessor,
 )
 from linke.evaluation.beam.metrics import (
     DEFAULT_PREDICTION_KEY,
     DEFAULT_LABEL_KEY,
+    DEFAULT_FEATURE_KEY,
 )
-
-from pdb import set_trace
 
 
 class TestTopKMetricPreprocessor:
@@ -536,7 +539,7 @@ class TestCoverageTopK:
 
         # Check combiner
         output = combiner.extract_output((out_metrics, out_num))
-        # check: if we forget to take the intersection between 
+        # check: if we forget to take the intersection between
         # label and accumulated vocabulary, the "label" value
         # would end up 1.2, which may not make sense.
         expected = {1: 0.4, 4: 0.8, 5: 1.0, "label": 1.0}
@@ -573,40 +576,126 @@ class TestCoverageTopK:
         )
 
 
-class TestRedundancy:
+class TestUniqueCountTopK:
+    pass
+
+
+class TestMiscalibrationTopK:
     def setup_method(self, method=None):
-        self.metric = RedundacyTopK(
+        tag_maps={
+                "A": ["tag1", "tag2", "tag3"],
+                "B": ["tag3", "tag5"],
+                "C": ["tag4", "tag6", "tag1", "tag2"],
+                "D": ["tag2"],
+                "E": ["tag4", "tag1", "tag2"],
+                "F": ["tag3", "tag1"],
+                "G": ["tag5"],
+                "H": ["tag3", "tag4"],
+                "I": ["tag1", "tag2", "tag3", "tag4", "tag7"],
+            }
+        self.metric = MiscalibrationTopK(
             top_k=[1, 4, 5],
+            tag_maps=tag_maps,
+            history_feature="view_history",
+            distance_metric="hellinger",
         )
+        
+        self.element = {
+            DEFAULT_PREDICTION_KEY: np.array(
+                [
+                    ["A", "B", "C", "G", "D"],
+                    ["D", "B", "I", "A", "E"],
+                    ["F", "E", "G", "C", "H"],
+                ]
+            ),
+            DEFAULT_FEATURE_KEY: {
+                "view_history": [
+                    ["H", "I"],
+                    ["C", "G", "H"],
+                    ["A", "B"],
+                ]
+            }
+        }
 
     def test_specs(self):
-        assert isinstance(self.metric.combiner, _RedundancyTopKCombiner)
+        assert isinstance(
+            self.metric.combiner, SampleTopKMetricCombiner
+        )
         assert len(self.metric.preprocessors) == 1
         assert isinstance(
             self.metric.preprocessors[0],
-            PopulationTopKMetricPreprocessor,
+            _MiscalibrationTopKPreprocessor,
         )
-        # No vocab estimation process
-        assert self.metric.combiner.vocabulary is None
-        vocab_estimate = self.metric.preprocessors[0].vocabulary_fields
-        assert len(vocab_estimate) == 0
 
-    def test_metric(self):
-        preprocessor = self.metric.preprocessors[0]
-        combiner = self.metric.combiner
-        element = {
-            DEFAULT_PREDICTION_KEY: np.array(
-                [
-                    ["A", "B", "C", "D", "E"],
-                    ["D", "A", "B", "C", "E"],
-                    ["A", "C", "B", "D", "E"],
-                ]
-            )
-        }
-        accumulator = next(iter(preprocessor.process(element)))
-        num = accumulator[1]
-        assert num == len(element[DEFAULT_PREDICTION_KEY])
-        output = combiner.extract_output(accumulator)
-        for k in output:
-            expected = 1 - len(accumulator[0][k].keys()) / (num * k)
-            assert np.allclose(expected, output[k])
+    def test_loading_tag_maps(self):
+        metric = MiscalibrationTopK(
+            top_k=[1, 4, 5],
+            tag_maps="linke/tests/data/tag_map.txt",
+            history_feature="view_history",
+        )
+        metric.preprocessors[0].setup()
+        tag_maps = metric.preprocessors[0].tag_maps
+        assert isinstance(tag_maps, dict)
+        assert len(tag_maps.keys()) == 9
+
+    def test_processor_hellinger(self):
+        processor: _MiscalibrationTopKPreprocessor = self.metric.preprocessors[0]
+        out_metrics, out_num = next(iter(processor.process(self.element)))
+        assert out_num == len(self.element[DEFAULT_PREDICTION_KEY])
+        assert all([k in out_metrics for k in self.metric.combiner.top_k])
+        # Using for-loop, one at a time
+        tags_map = self.metric.preprocessors[0].tag_maps
+        
+        def _hellinger_distance(history, prediction):
+            tag_history = Counter(sum([tags_map[h] for h in history], []))
+            tag_pred = Counter(sum([tags_map[p] for p in prediction], []))
+            all_tags = tag_history+tag_pred
+            p, q = [], []
+            for key in all_tags:
+                p.append(tag_history.get(key, 0))
+                q.append(tag_pred.get(key, 0))
+            p = np.asarray(p)
+            q = np.asarray(q)
+            p = p / np.sum(p)
+            q = q / np.sum(q)
+            dist = np.sum((np.sqrt(p) - np.sqrt(q))**2)
+            return np.sqrt(dist) / np.sqrt(2)
+
+        for k in self.metric.combiner.top_k:
+            res = 0
+            for ii in range(3):
+                history = self.element[DEFAULT_FEATURE_KEY]["view_history"][ii]
+                prediction = self.element[DEFAULT_PREDICTION_KEY][ii][:k]
+                res += _hellinger_distance(history, prediction)
+            assert np.allclose(out_metrics[k], res)
+    
+    def test_preprocessor_kl(self):
+        processor: _MiscalibrationTopKPreprocessor = self.metric.preprocessors[0]
+        processor.distance_metric = "kl-divergence"
+        out_metrics, out_num = next(iter(processor.process(self.element)))
+        tags_map = self.metric.preprocessors[0].tag_maps
+        eps = _MiscalibrationTopKPreprocessor.eps
+        
+        def _kl_divergence(history, prediction):
+            tag_history = Counter(sum([tags_map[h] for h in history], []))
+            tag_pred = Counter(sum([tags_map[p] for p in prediction], []))
+            all_tags = tag_history+tag_pred
+            p, q = [], []
+            for key in all_tags:
+                p.append(tag_history.get(key, 0))
+                q.append(tag_pred.get(key, 0))
+            p = np.asarray(p)
+            q = np.asarray(q)
+            p = p / np.sum(p)
+            q = q / np.sum(q)
+            dist = p * (np.log(p + eps) - np.log(q + eps))
+            return dist.sum()
+        
+        for k in self.metric.combiner.top_k:
+            res = 0
+            for ii in range(3):
+                history = self.element[DEFAULT_FEATURE_KEY]["view_history"][ii]
+                prediction = self.element[DEFAULT_PREDICTION_KEY][ii][:k]
+                res += _kl_divergence(history, prediction)
+            assert np.allclose(out_metrics[k], res, atol=1e-3)
+        

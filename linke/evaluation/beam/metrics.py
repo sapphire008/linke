@@ -11,14 +11,19 @@ from typing import (
     Tuple,
     Iterable,
 )
+import json
 import copy
+import keyword
 from itertools import zip_longest
 from collections import Counter
 import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix, coo_matrix, sparray
 import apache_beam as beam
-from apache_beam.transforms.stats import ApproximateUnique, ApproximateUniqueCombineFn
+from apache_beam.transforms.stats import (
+    ApproximateUnique,
+    ApproximateUniqueCombineFn,
+)
 
 from pdb import set_trace
 
@@ -115,7 +120,9 @@ class TopKMetricPreprocessor(beam.DoFn):
                         f"Unable to handle sparse label with dtype {type(label[0][0])}"
                     )
                 )
-            label = np.array(list(zip_longest(*label, fillvalue=fillvalue))).T
+            label = np.array(
+                list(zip_longest(*label, fillvalue=fillvalue))
+            ).T
             return label, fillvalue
 
         # Create dense tensor label
@@ -127,8 +134,12 @@ class TopKMetricPreprocessor(beam.DoFn):
             else:
                 fillvalue = pad
             label: coo_matrix = label.tocoo()
-            res = np.full(label.shape, fillvalue, dtype=label.data.dtype)
-            np.put(res, label.row * label.shape[1] + label.col, label.data)
+            res = np.full(
+                label.shape, fillvalue, dtype=label.data.dtype
+            )
+            np.put(
+                res, label.row * label.shape[1] + label.col, label.data
+            )
             return res, fillvalue
 
         # For float matrix, use 0 as padding
@@ -141,12 +152,16 @@ class TopKMetricPreprocessor(beam.DoFn):
         ):
             label: coo_matrix = label.tocoo()
             res = np.full(label.shape, "", dtype=label.data.dtype)
-            np.put(res, label.row * label.shape[1] + label.col, label.data)
+            np.put(
+                res, label.row * label.shape[1] + label.col, label.data
+            )
             return res, ""
 
         # Throw exception for all other label dtypes
         raise (
-            TypeError(f"Unable to handle sparse label with dtype {label.data.dtype}")
+            TypeError(
+                f"Unable to handle sparse label with dtype {label.data.dtype}"
+            )
         )
 
     @staticmethod
@@ -154,7 +169,9 @@ class TopKMetricPreprocessor(beam.DoFn):
         x: np.ndarray,
         y: np.ndarray,
         pad: Union[int, str] = None,
-        operation: Literal["intersection", "union", "difference"] = "intersection",
+        operation: Literal[
+            "intersection", "union", "difference"
+        ] = "intersection",
         returns: Literal["count", "matrix"] = "count",
     ):
         """
@@ -176,7 +193,9 @@ class TopKMetricPreprocessor(beam.DoFn):
 
         # Use np.unique to create convert from data -> indices
         # This can appropriately handle all data types, including strings
-        unique, indices = np.unique(np.hstack((x, y)), return_inverse=True)
+        unique, indices = np.unique(
+            np.hstack((x, y)), return_inverse=True
+        )
         n_unique = len(unique)
 
         # From flattened index -> original shape
@@ -301,7 +320,10 @@ class SampleTopKMetricCombiner(beam.CombineFn):
         accumulator: Tuple[Dict[int, float], int],
         state: Tuple[Dict[int, float], int],
     ) -> Tuple[Dict[int, float], int]:
-        metrics = {k: accumulator[0].get(k, 0.0) + state[0][k] for k in state[0]}
+        metrics = {
+            k: accumulator[0].get(k, 0.0) + state[0][k]
+            for k in state[0]
+        }
         n = accumulator[1] + state[1]
         return metrics, n
 
@@ -311,7 +333,10 @@ class SampleTopKMetricCombiner(beam.CombineFn):
         accumulators = iter(accumulators)
         result = next(accumulators)  # get the first item
         for accumulator in accumulators:
-            metric = {k: accumulator[0].get(k, 0.0) + result[0][k] for k in result[0]}
+            metric = {
+                k: accumulator[0].get(k, 0.0) + result[0][k]
+                for k in result[0]
+            }
             n = accumulator[1] + result[1]
             result = (metric, n)
         return result
@@ -319,7 +344,9 @@ class SampleTopKMetricCombiner(beam.CombineFn):
     def extract_output(
         self, accumulator: Tuple[Dict[int, float], int]
     ) -> Dict[int, float]:
-        return {k: v / accumulator[1] for k, v in accumulator[0].items()}
+        return {
+            k: v / accumulator[1] for k, v in accumulator[0].items()
+        }
 
 
 # Orderless Metrics
@@ -380,7 +407,9 @@ class HitRatioTopK(BaseMetric):
                     weight_key=weight_key,
                 )
             ],
-            combiner=SampleTopKMetricCombiner(metric_key="hit_ratio", top_k=top_k),
+            combiner=SampleTopKMetricCombiner(
+                metric_key="hit_ratio", top_k=top_k
+            ),
         )
 
 
@@ -405,7 +434,9 @@ class _NDCGTopKPreprocessor(TopKMetricPreprocessor):
         y_weight: Union[np.ndarray, sparray, List[List], None] = (
             element[self.weight_key]
             if self.weight_key in element
-            else element.get(self.feature_key, {}).get(self.weight_key, None)
+            else element.get(self.feature_key, {}).get(
+                self.weight_key, None
+            )
         )
         if y_weight is not None:
             y_weight, _ = self.sparse_to_dense(y_weight, 0.0)
@@ -451,7 +482,9 @@ class NDCGTopK(BaseMetric):
                     weight_key=weight_key,
                 )
             ],
-            combiner=SampleTopKMetricCombiner(metric_key="ndcg", top_k=top_k),
+            combiner=SampleTopKMetricCombiner(
+                metric_key="ndcg", top_k=top_k
+            ),
         )
 
 
@@ -508,7 +541,10 @@ class PopulationTopKMetricPreprocessor(TopKMetricPreprocessor):
         for k in self.top_k:
             results[k] = Counter(y_pred[:, :k].ravel())
         # Additional fields for accumulation
-        if "label" in self.other_fields or "label" in self.vocabulary_fields:
+        if (
+            "label" in self.other_fields
+            or "label" in self.vocabulary_fields
+        ):
             y_label: Union[np.ndarray, sparray, List[List]] = (
                 element[self.label_key]
                 if self.label_key in element
@@ -595,7 +631,8 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
                 metrics[k].update(state[0][k])
         else:
             metrics = {
-                k: accumulator[0].get(k, Counter()) + state[0][k] for k in state[0]
+                k: accumulator[0].get(k, Counter()) + state[0][k]
+                for k in state[0]
             }
         n = accumulator[1] + state[1]
         return metrics, n
@@ -679,7 +716,9 @@ class CoverageTopK(BaseMetric):
         """
         top_k = [top_k] if isinstance(top_k, int) else top_k
         vocabulary_fields = (
-            (vocabulary_fields or ["prediction"]) if not vocabulary else []
+            (vocabulary_fields or ["prediction"])
+            if not vocabulary
+            else []
         )
         super(CoverageTopK, self).__init__(
             name="coverage",
@@ -701,7 +740,6 @@ class CoverageTopK(BaseMetric):
                 accumulate_vocabulary=True if not vocabulary else False,
             ),
         )
-
 
 
 # %% Approximate Count Metrics
@@ -757,8 +795,8 @@ class _UniqueCountTopKPreprocessor(TopKMetricPreprocessor):
             y_label = pd.Series(y_label.tolist()).str.join("")
             # initial round of dedup
             results["label"] = y_label.unique().tolist()
-        
-        # emitting one result at a time for 
+
+        # emitting one result at a time for
         # approximate_count_distinct_combiner
         for k, v in results.items():
             for vv in v:
@@ -766,6 +804,9 @@ class _UniqueCountTopKPreprocessor(TopKMetricPreprocessor):
 
 
 class UniqueCountTopK(BaseMetric):
+    """Approximate count unique combintions of
+    top-k recommendations."""
+
     def __init__(
         self,
         top_k: Union[int, List[int]],
@@ -786,7 +827,9 @@ class UniqueCountTopK(BaseMetric):
             include_labels=include_labels,
             use_ordered_list=use_ordered_list,
         )
-        self._sample_size = ApproximateUnique.parse_input_params(None, error)
+        self._sample_size = ApproximateUnique.parse_input_params(
+            None, error
+        )
 
         super(UniqueCountTopK, self).__init__(
             name="unique_count",
@@ -796,6 +839,202 @@ class UniqueCountTopK(BaseMetric):
                 str(k): ApproximateUniqueCombineFn(
                     self._sample_size, coder=beam.coders.StrUtf8Coder()
                 )
-                for k in _preprocessor.top_k + (["label"] if include_labels else [])
+                for k in _preprocessor.top_k
+                + (["label"] if include_labels else [])
             },
+        )
+
+
+# %% Bias metrics
+
+
+class WeakArtifactRef:
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            assert self._check_valid_attribute_name(k), (
+                f"{k} is not a valid config key from initialization. "
+                "Make sure to use keys that can be used "
+                "for object attributes."
+            )
+            setattr(self, k, v)
+
+    def _check_valid_attribute_name(self, name: str):
+        return name.isidentifier() and not keyword.iskeyword(name)
+
+
+class _MiscalibrationTopKPreprocessor(TopKMetricPreprocessor):
+    eps = 1e-6
+    
+    def __init__(
+        self,
+        top_k: Union[int, List[int]],
+        tag_maps: Union[str, Dict[str, List[str]]],
+        history_feature: str,
+        distance_metric: Literal[
+            "hellinger", "kl-divergence"
+        ] = "hellinger",
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+        group_keys: List[List[str]] = None,
+    ):
+        super(_MiscalibrationTopKPreprocessor, self).__init__(
+            top_k=top_k,
+            feature_key=feature_key,
+            prediction_key=prediction_key,
+            label_key=label_key,
+            weight_key=weight_key,
+            group_keys=group_keys,
+        )
+        self.history_feature = history_feature
+        # Tags for each vocabulary
+        self.tag_maps = tag_maps
+        if isinstance(tag_maps, str):
+            self._shared_handle = beam.utils.shared.Shared()
+        # Distance metric
+        assert distance_metric in [
+            "hellinger",
+            "kl-divergence",
+        ], "distance_metric can either be 'hellinger' or 'kl-divergence'"
+        self.distance_metric = distance_metric
+
+    def setup(self):
+        def initialize():
+            # Load artifact into a map
+            df = pd.read_csv(self.tag_maps, header=None)
+            df.columns = ["id", "tags"]
+            df["tags"] = (
+                df["tags"].str.replace("'", '"').apply(json.loads)
+            )
+            tag_maps = dict(zip(df["id"].values, df["tags"].values))
+            return WeakArtifactRef(tag_maps=tag_maps)
+
+        if isinstance(self.tag_maps, str):
+            self.tag_maps = self._shared_handle.acquire(
+                initialize
+            ).tag_maps
+
+    def _process_tags(self, y):
+        tags = pd.Series(y).explode().map(self.tag_maps)
+        tags = tags.apply(Counter)
+        tags = tags.groupby(level=0).sum()
+        total = np.asarray([x.total() for x in tags])
+        tags = tags.apply(pd.Series)
+        return tags, total
+
+    def accumulate_metric(self, element):
+        results = {}
+        # Extract history tags
+        y_history: list = element[self.feature_key][
+            self.history_feature
+        ]
+
+        tags_history, total_history = self._process_tags(y_history)
+        tags_history = tags_history / total_history[:, None]
+        tags_history = tags_history.stack()
+
+        # Enumerate through prediction top_k
+        y_pred: np.ndarray = element[self.prediction_key]
+        n = len(y_history)
+        for k in self.top_k:
+            tags_pred, total_pred = self._process_tags(y_pred[:, :k].tolist())
+            tags_pred = tags_pred / total_pred[:, None]
+            if self.distance_metric == "kl-divergence":
+                # Smoothing, preventing division/log by zero
+                tags_pred = (
+                    tags_pred
+                    - self.eps
+                    * pd.isnull(tags_pred).sum(axis=1).values[:, None]
+                )
+
+            tags_pred = tags_pred.stack()
+
+            # Merge into a single dataframe
+            df = pd.concat([tags_history, tags_pred], axis=1)
+            df.columns = ["history", "prediction"]
+            df["history"] = df["history"].fillna(0)
+            if self.distance_metric == "kl-divergence":
+                df["prediction"] = df["prediction"].fillna(self.eps)
+            else:
+                df["prediction"] = df["prediction"].fillna(0)
+
+            # Compute metric
+            if self.distance_metric == "hellinger":
+                df["metric"] = (
+                    np.sqrt(df["history"].values)
+                    - np.sqrt(df["prediction"].values)
+                ) ** 2
+            elif self.distance_metric == "kl-divergence":
+                df["metric"] = df["history"].values * (
+                    np.log(df["history"].values + self.eps)
+                    - np.log(df["prediction"].values)
+                )
+            df.drop(columns=["history", "prediction"], inplace=True)
+            df = df.groupby(level=0).sum()
+
+            if self.distance_metric == "hellinger":
+                df["metric"] = np.sqrt(df["metric"].values) / np.sqrt(2)
+
+            results[k] = df["metric"].sum()
+        yield results, n
+
+
+class MiscalibrationTopK(BaseMetric):
+    def __init__(
+        self,
+        top_k: Union[int, List[int]],
+        tag_maps: Union[str, Dict[str, List[str]]],
+        history_feature: str,
+        distance_metric: Literal[
+            "hellinger", "kl-divergence"
+        ] = "hellinger",
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+    ):
+        """
+        Miscalibration bias metric.
+        According to:  The Connection Between
+        Popularity Bias, Calibration, and
+        Fairness in Recommendation
+        https://arxiv.org/pdf/2008.09273
+
+        Parameters
+        ----------
+        ...
+        tag_maps : Union[str, Dict[str, List[str]]]
+            Either a map between the content ids
+            and a list of tags/attributes, or a path
+            that points to a csv file with two columns
+            (without header row):
+            id, [list of tags], e.g.
+            content_id_1, "['tag1', 'tag2', 'tag3']"
+        history_feature: str
+            Name of the feature for historical
+            content interactions
+        distance_metric: One of ["hellinger", "kl-divergence"]
+            Supports either Hellinger Distance (default)
+            or KL-Divergence
+        ...
+        """
+        super(MiscalibrationTopK, self).__init__(
+            name="miscalibration",
+            preprocessors=[
+                _MiscalibrationTopKPreprocessor(
+                    top_k=top_k,
+                    tag_maps=tag_maps,
+                    history_feature=history_feature,
+                    distance_metric=distance_metric,
+                    feature_key=feature_key,
+                    prediction_key=prediction_key,
+                    label_key=label_key,
+                    weight_key=weight_key,
+                )
+            ],
+            # one combiner per output key
+            combiner=SampleTopKMetricCombiner(
+                metric_key="miscalibration", top_k=top_k
+            ),
         )
