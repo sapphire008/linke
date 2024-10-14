@@ -610,7 +610,7 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
         self.retain_zeros = retain_zeros
         self.accumulate_vocabulary = accumulate_vocabulary
 
-    def create_accumulator(self) -> Tuple[Dict[int, float], int]:
+    def create_accumulator(self) -> Tuple[Dict[int, Counter], int]:
         # top-k accumulator, count
         return {
             k: Counter()
@@ -638,8 +638,8 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
         return metrics, n
 
     def merge_accumulators(
-        self, accumulators: Iterable[Tuple[Dict[int, float], int]]
-    ) -> Tuple[Dict[int, float], int]:
+        self, accumulators: Iterable[Tuple[Dict[int, Counter], int]]
+    ) -> Tuple[Dict[int, Counter], int]:
         accumulators = iter(accumulators)
         result = next(accumulators)  # get the first item
         for accumulator in accumulators:
@@ -658,7 +658,7 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
         return result
 
     def extract_output(
-        self, accumulator: Tuple[Dict[int, float], int]
+        self, accumulator: Tuple[Dict[int, Counter], int]
     ) -> Dict[int, float]:
         """Needs to be implemented for specific metrics."""
         return accumulator
@@ -666,7 +666,7 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
 
 class _CoverageTopKCombiner(PopulationTopKMetricCombiner):
     def extract_output(
-        self, accumulator: Tuple[Dict[int, float], int]
+        self, accumulator: Tuple[Dict[int, Counter], int]
     ) -> Dict[int, float]:
         accumulator, _ = accumulator
         if self.vocabulary:
@@ -701,7 +701,7 @@ class CoverageTopK(BaseMetric):
         Args:
             top_k (Union[int, List[int]]): Top-k of predictions
                 used to compute coverage.
-            include_labels (bool, optional): Whehter or not
+            include_labels (bool, optional): Whether or not
                 to include coverage metric for labels.
                 Defaults to True.
             vocabulary (List[str]): Explicit list of vocabulary
@@ -738,6 +738,150 @@ class CoverageTopK(BaseMetric):
                 top_k=top_k,
                 vocabulary=vocabulary,
                 accumulate_vocabulary=True if not vocabulary else False,
+            ),
+        )
+
+
+class _ECSTopKCombiner(PopulationTopKMetricCombiner):
+    def extract_output(
+        self, accumulator: Tuple[Dict[int, Union[Counter, Dict]], int]
+    ) -> Dict[int, float]:
+        accumulator, _ = accumulator
+        result = {}
+        for k, acc in accumulator.items():
+            sorted_acc = sorted(
+                tuple(acc.items()), key=lambda x: x[1], reverse=True
+            )
+            _, p = zip(*sorted_acc)
+            p = np.array(p)
+            p = p / p.sum()  # normalize
+            # 2 * (Σ_i^N p_i  * i) - 1
+            ecs = 2 * (p * np.arange(1, len(p) + 1)).sum() - 1
+            result[k] = ecs
+
+        return result
+
+
+class EffectiveCatalogSizeTopK(BaseMetric):
+    """Effective Catalog Size metric from Netflix's paper:
+    The Netflix Recommender System: Algorithms,
+    Business Value, and Innovation
+    https://dl.acm.org/doi/pdf/10.1145/2843948
+
+    Unlike the original paper that uses total hours watched as
+    weights for each item occurrence on existing/observed data,
+    we use the count of the occurrences of each item in top-k
+    predictions (or labels) as the popularity measure to calculate
+    the effective catalog size.
+    """
+
+    def __init__(
+        self,
+        top_k: Union[int, List[int]],
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        include_labels: bool = True,
+    ):
+        """
+        Args:
+            top_k (Union[int, List[int]]): Top-k of predictions
+                used to compute coverage.
+        """
+        top_k = [top_k] if isinstance(top_k, int) else top_k
+        super(EffectiveCatalogSizeTopK, self).__init__(
+            name="effective_catalog_size",
+            preprocessors=[
+                PopulationTopKMetricPreprocessor(
+                    top_k=top_k,
+                    feature_key=feature_key,
+                    prediction_key=prediction_key,
+                    label_key=label_key,
+                    weight_key=None,
+                    other_fields=["label"] if include_labels else [],
+                    vocabulary_fields=[],
+                )
+            ],
+            combiner=_ECSTopKCombiner(
+                metric_key="effective_catalog_size",
+                top_k=top_k,
+                vocabulary=None,
+                accumulate_vocabulary=True,
+            ),
+        )
+
+
+class GlobalWeightedSumTopKMetricPreprocessor(TopKMetricPreprocessor):
+    def accumulate_metric(self, element: Dict[str, Any]):
+        y_label: Union[np.ndarray, sparray, List[List]] = (
+            element[self.label_key]
+            if self.label_key in element
+            # Attempting to get from the feature
+            else element[self.feature_key][self.label_key]
+        )
+        n = len(y_label)
+        y_label = self.flatten_array(y_label)
+        if self.weight_key:
+            y_weight: Union[np.ndarray, sparray, List[List]] = (
+                element[self.feature_key][self.weight_key]
+            )
+            y_weight = self.flatten_array(y_weight)
+            assert len(y_label) == len(y_weight), "Expecting label and weight having same number of elements"
+        else:
+            y_weight = np.ones_like(y_label, dtype=float)
+        
+        # Scatter
+        unique_keys, inverse_index = np.unique(y_label, return_inverse=True)
+        accumulated_weights = np.zeros_like(unique_keys, dtype=float)
+        np.add.at(accumulated_weights, inverse_index, y_weight)
+        result = dict(zip(unique_keys, accumulated_weights))
+        
+        yield result, n
+        
+
+class EffectiveCatalogSizeLabels(BaseMetric):
+    """Effective Catalog Size metric from Netflix's paper:
+    The Netflix Recommender System: Algorithms,
+    Business Value, and Innovation
+    https://dl.acm.org/doi/pdf/10.1145/2843948
+
+    Different from the EffectiveCatalogSizeTopK
+    metric class, this metric measures the effective
+    catalog size in the existing data. It therefore allows
+    us to construct the popularity measure by using
+    weights on each occurrence of the item, e.g. hours
+    engaged. This can also be considered as an online
+    metric for AB testing.
+    """
+
+    def __init__(
+        self,
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+    ):
+        """
+        Args:
+            top_k (Union[int, List[int]]): Top-k of predictions
+                used to compute coverage.
+        """
+        super(EffectiveCatalogSizeLabels, self).__init__(
+            name="effective_catalog_size_labels",
+            preprocessors=[
+                GlobalWeightedSumTopKMetricPreprocessor(
+                    top_k=-1,
+                    feature_key=feature_key,
+                    prediction_key=prediction_key,
+                    label_key=label_key,
+                    weight_key=weight_key,
+                )
+            ],
+            combiner=_ECSTopKCombiner(
+                metric_key="effective_catalog_size_labels",
+                top_k=-1,
+                vocabulary=None,
+                accumulate_vocabulary=True,
             ),
         )
 
@@ -1196,8 +1340,7 @@ class PopularityLiftTopK(BaseMetric):
             and popularity score, or a path
             that points to a csv file with two columns
             (without header row):
-            id, popularity, e.g.
-            content_id_1, 128.0
+            id, popularity, e.g. content_id_1, 128.0
         history_feature: str
             Name of the feature for historical
             content interactions
