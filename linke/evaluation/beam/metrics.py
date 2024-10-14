@@ -864,7 +864,7 @@ class WeakArtifactRef:
 
 class _MiscalibrationTopKPreprocessor(TopKMetricPreprocessor):
     eps = 1e-6
-    
+
     def __init__(
         self,
         top_k: Union[int, List[int]],
@@ -938,7 +938,9 @@ class _MiscalibrationTopKPreprocessor(TopKMetricPreprocessor):
         y_pred: np.ndarray = element[self.prediction_key]
         n = len(y_history)
         for k in self.top_k:
-            tags_pred, total_pred = self._process_tags(y_pred[:, :k].tolist())
+            tags_pred, total_pred = self._process_tags(
+                y_pred[:, :k].tolist()
+            )
             tags_pred = tags_pred / total_pred[:, None]
             if self.distance_metric == "kl-divergence":
                 # Smoothing, preventing division/log by zero
@@ -1036,5 +1038,186 @@ class MiscalibrationTopK(BaseMetric):
             # one combiner per output key
             combiner=SampleTopKMetricCombiner(
                 metric_key="miscalibration", top_k=top_k
+            ),
+        )
+
+
+class _PopularityLiftTopKPreprocessor(TopKMetricPreprocessor):
+    def __init__(
+        self,
+        top_k: Union[int, List[int]],
+        popularity_maps: Union[str, Dict[str, float]],
+        history_feature: str,
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+        group_keys: List[List[str]] = None,
+    ):
+        super(_PopularityLiftTopKPreprocessor, self).__init__(
+            top_k=top_k,
+            feature_key=feature_key,
+            prediction_key=prediction_key,
+            label_key=label_key,
+            weight_key=weight_key,
+            group_keys=group_keys,
+        )
+        self.history_feature = history_feature
+        # Tags for each vocabulary
+        self.popularity_maps = popularity_maps
+        if isinstance(popularity_maps, str):
+            self._shared_handle = beam.utils.shared.Shared()
+
+    def setup(self):
+        def initialize():
+            # Load artifact into a map
+            df = pd.read_csv(self.popularity_maps, header=None)
+            df.columns = ["id", "popularity"]
+            popularity_maps = dict(
+                zip(df["id"].values, df["popularity"].values)
+            )
+            return WeakArtifactRef(popularity_maps=popularity_maps)
+
+        if isinstance(self.popularity_maps, str):
+            self.popularity_maps = self._shared_handle.acquire(
+                initialize
+            ).popularity_maps
+
+    def _process_popularity(self, y):
+        pop = pd.Series(y).explode().map(self.popularity_maps)
+        pop = pop.groupby(level=0).mean()
+        return pop
+
+    def accumulate_metric(self, element):
+        history_result, prediction_result = {}, {}
+        # Extract history tags
+        y_history: list = element[self.feature_key][
+            self.history_feature
+        ]
+        pop_history = self._process_popularity(y_history)
+
+        # Enumerate through prediction top_k
+        y_pred: np.ndarray = element[self.prediction_key]
+        for k in self.top_k:
+            pop_pred = self._process_popularity(y_pred[:, :k].tolist())
+
+            # Merge into a single dataframe
+            df = pd.concat([pop_history, pop_pred], axis=1)
+            df.columns = ["history", "prediction"]
+            df = df.fillna(0)
+            df = df.sum(axis=0)
+            history_result[k] = df["history"]
+            prediction_result[k] = df["prediction"]
+        yield history_result, prediction_result
+
+
+class _PopularityLiftTopKCombiner(beam.CombineFn):
+    def __init__(self, metric_key: str, top_k: Union[int, List[int]]):
+        super(_PopularityLiftTopKCombiner, self).__init__()
+        self.metric_key = metric_key
+        self.top_k = [top_k] if isinstance(top_k, int) else top_k
+
+    def create_accumulator(
+        self,
+    ) -> Tuple[Dict[int, float], Dict[int, float]]:
+        # top-k accumulator history, prediction, count
+        return {k: 0.0 for k in self.top_k}, {
+            k: 0.0 for k in self.top_k
+        }
+
+    def add_input(
+        self,
+        accumulator: Tuple[Dict[int, float], Dict[int, float]],
+        state: Tuple[Dict[int, float], Dict[int, float]],
+    ) -> Tuple[Dict[int, float], Dict[int, float]]:
+        history = {
+            k: accumulator[0].get(k, 0.0) + state[0][k]
+            for k in state[0]
+        }
+        prediction = {
+            k: accumulator[1].get(k, 0.0) + state[1][k]
+            for k in state[1]
+        }
+        return history, prediction
+
+    def merge_accumulators(
+        self,
+        accumulators: Iterable[
+            Tuple[Dict[int, float], Dict[int, float]]
+        ],
+    ) -> Tuple[Dict[int, float], Dict[int, float]]:
+        accumulators = iter(accumulators)
+        result = next(accumulators)  # get the first item
+        for accumulator in accumulators:
+            history = {
+                k: accumulator[0].get(k, 0.0) + result[0][k]
+                for k in result[0]
+            }
+            prediction = {
+                k: accumulator[1].get(k, 0.0) + result[1][k]
+                for k in result[1]
+            }
+            result = (history, prediction)
+        return result
+
+    def extract_output(
+        self, accumulator: Tuple[Dict[int, float], Dict[int, float]]
+    ) -> Dict[int, float]:
+        history, prediction = accumulator
+        return {
+            k: (prediction[k] - history[k]) / history[k]
+            for k in history
+        }
+
+
+class PopularityLiftTopK(BaseMetric):
+    def __init__(
+        self,
+        top_k: Union[int, List[int]],
+        popularity_maps: Union[str, Dict[str, float]],
+        history_feature: str,
+        feature_key: str = DEFAULT_FEATURE_KEY,
+        prediction_key: str = DEFAULT_PREDICTION_KEY,
+        label_key: str = DEFAULT_LABEL_KEY,
+        weight_key: str = None,
+    ):
+        """
+        Popularity lift bias metric.
+        According to:  The Connection Between
+        Popularity Bias, Calibration, and
+        Fairness in Recommendation
+        https://arxiv.org/pdf/2008.09273
+
+        Parameters
+        ----------
+        ...
+        popularity_maps : Union[str, Dict[str, float]]
+            Either a map between the content ids
+            and popularity score, or a path
+            that points to a csv file with two columns
+            (without header row):
+            id, popularity, e.g.
+            content_id_1, 128.0
+        history_feature: str
+            Name of the feature for historical
+            content interactions
+        ...
+        """
+        super(PopularityLiftTopK, self).__init__(
+            name="popularity_lift",
+            preprocessors=[
+                _PopularityLiftTopKPreprocessor(
+                    top_k=top_k,
+                    popularity_maps=popularity_maps,
+                    history_feature=history_feature,
+                    feature_key=feature_key,
+                    prediction_key=prediction_key,
+                    label_key=label_key,
+                    weight_key=weight_key,
+                )
+            ],
+            # one combiner per output key
+            combiner=_PopularityLiftTopKCombiner(
+                metric_key="popularity_lift", top_k=top_k
             ),
         )

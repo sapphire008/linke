@@ -26,6 +26,9 @@ from linke.evaluation.beam.metrics import (
     _UniqueCountTopKPreprocessor,
     MiscalibrationTopK,
     _MiscalibrationTopKPreprocessor,
+    PopularityLiftTopK,
+    _PopularityLiftTopKPreprocessor,
+    _PopularityLiftTopKCombiner,
 )
 from linke.evaluation.beam.metrics import (
     DEFAULT_PREDICTION_KEY,
@@ -800,3 +803,110 @@ class TestMiscalibrationTopK:
                 ]
                 res += _kl_divergence(history, prediction)
             assert np.allclose(out_metrics[k], res, atol=1e-3)
+
+
+class TestPopularityLiftTopK:
+    def setup_method(self, method=None):
+        popularity_maps={
+                "A": 100,
+                "B": 120,
+                "C": 50,
+                "D": 20,
+                "E": 70,
+                "F": 60,
+                "G": 10,
+            }
+        self.metric = PopularityLiftTopK(
+            top_k=[1, 4, 5],
+            popularity_maps=popularity_maps,
+            history_feature="view_history",
+        )
+
+        self.element = {
+            DEFAULT_PREDICTION_KEY: np.array(
+                [
+                    ["A", "B", "C", "G", "D"],
+                    ["D", "B", "F", "A", "E"],
+                    ["F", "E", "G", "C", "B"],
+                ]
+            ),
+            DEFAULT_FEATURE_KEY: {
+                "view_history": [
+                    ["E", "F"],
+                    ["C", "D", "G"],
+                    ["A", "D"],
+                ]
+            },
+        }
+
+    def test_specs(self):
+        assert isinstance(
+            self.metric.combiner, _PopularityLiftTopKCombiner
+        )
+        assert len(self.metric.preprocessors) == 1
+        assert isinstance(
+            self.metric.preprocessors[0],
+            _PopularityLiftTopKPreprocessor,
+        )
+        
+    def test_processor(self):
+        processor = self.metric.preprocessors[0]
+        history_metrics, prediction_metrics = next(iter(processor.process(self.element)))
+        pop_map = self.metric.preprocessors[0].popularity_maps
+        
+        iter_hist_result, iter_pred_result = {}, {}
+        for k in self.metric.combiner.top_k:
+            iter_hist_result[k] = []
+            iter_pred_result[k] = []
+            for ii in range(self.element[DEFAULT_PREDICTION_KEY].shape[0]):
+                y_hist = self.element[DEFAULT_FEATURE_KEY]["view_history"][ii]
+                y_pred = self.element[DEFAULT_PREDICTION_KEY][ii, :k]
+                # Get mean popularity
+                p = np.mean([pop_map.get(y, 0) for y in y_hist])
+                q = np.mean([pop_map.get(y, 0) for y in y_pred])
+                iter_hist_result[k].append(p)
+                iter_pred_result[k].append(q)
+            assert np.allclose(history_metrics[k], sum(iter_hist_result[k]))
+            assert np.allclose(prediction_metrics[k], sum(iter_pred_result[k]))
+    
+    def test_combine_fn_create(self):
+        hist_acc, pred_acc = self.metric.combiner.create_accumulator()
+        assert all([k in hist_acc for k in self.metric.combiner.top_k])
+        assert all([k in pred_acc for k in self.metric.combiner.top_k])
+
+    def test_combine_fn_add(self):
+        history_acc = {1: 10, 4: 20, 5: 100}
+        pred_acc = {1: 20, 4: 40, 5: 120}
+        new_history_acc = {1: 30, 4: 50, 5: 140}
+        new_pred_acc = {1: 10, 4: 50, 5: 150}
+        expected_hist = {k: history_acc[k]+new_history_acc[k] for k in history_acc}
+        expected_pred = {k: pred_acc[k]+new_pred_acc[k] for k in pred_acc}
+        hist_result, pred_result = self.metric.combiner.add_input((history_acc, pred_acc), (new_history_acc, new_pred_acc))
+        assert all([expected_hist[k] == hist_result[k] for k in self.metric.combiner.top_k])
+        assert all([expected_pred[k] == pred_result[k] for k in self.metric.combiner.top_k])
+
+    
+    def test_combine_fn_merge(self):
+        accumulators = [
+            ({1: 10, 4: 20, 5: 100}, {1: 20, 4: 40, 5: 120}),
+            ({1: 30, 4: 50, 5: 140}, {1: 10, 4: 50, 5: 150}),
+            ({1: 15, 4: 30, 5: 60},  {1: 50, 4: 80, 5: 170})
+        ]
+        merge_hist, merge_pred = {}, {}
+        for hist, pred in accumulators:
+            for k in self.metric.combiner.top_k:
+                merge_hist[k] = merge_hist.get(k, 0) + hist[k]
+                merge_pred[k] = merge_pred.get(k, 0) + pred[k]
+        hist_result, pred_result = self.metric.combiner.merge_accumulators(accumulators)
+        for k in self.metric.combiner.top_k:
+            assert hist_result[k] == merge_hist[k]
+            assert pred_result[k] == merge_pred[k]
+    
+    def test_combine_fn_extract(self):
+        history = {1: 100, 4: 200, 5: 500}
+        prediction = {1: 105, 4: 190, 5: 600}
+        result = self.metric.combiner.extract_output((history, prediction))
+        for k in self.metric.combiner.top_k:
+            expected = (prediction[k] - history[k]) / history[k]
+            assert np.allclose(result[k], expected)
+    
