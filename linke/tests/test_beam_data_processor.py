@@ -20,7 +20,7 @@ from linke.dataset.beam.data_processor import (
     ParquetSchemaField, ParquetInputData, ParquetOutputData,
 )
 # fmt: on
-from linke.dataset.beam.component import (
+from linke.dataset.beam.components import (
     beam_data_processing_component,
 )
 from linke.dataset.beam.utils import (

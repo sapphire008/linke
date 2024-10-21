@@ -57,3 +57,8 @@ def beam_data_processing_component(
         setup_fn=setup_fn,
         beam_pipeline_args=beam_pipeline_args,
     )
+
+
+@dsl.component
+def example_gen():
+    pass

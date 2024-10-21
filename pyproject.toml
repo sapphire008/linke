@@ -18,6 +18,7 @@ google-cloud-aiplatform = "1.59.0"
 tensorflow-metadata = "1.15.0"
 protobuf = "4.25.3"
 scipy = "1.14.1"
+dynaconf = "3.2.6"
 
 [tool.poetry.group.gcp.dependencies]
 apache-beam = {extras = ["gcp"], version = "2.57.0"}
