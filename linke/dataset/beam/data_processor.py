@@ -289,7 +289,7 @@ class ReadCsvData(beam.PTransform):
         be a batch of records rather than a single record.
     * max_batch_size: maximum batch size if using batch. Default to 1024.
     * columns: list of columns to read only
-    * **kwargs: addition keyword arguments used to read csv. See
+    * kwargs: dict of addition keyword arguments used to read csv. See
         https://beam.apache.org/releases/pydoc/current/apache_beam.io.textio.html?highlight=readfromcsv#apache_beam.io.textio.ReadFromCsv
     """
 

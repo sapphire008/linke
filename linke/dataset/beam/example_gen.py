@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Union, Tuple, List, Iterable, Any
+from typing import Dict, Union, Tuple, List, Iterable, Any, Literal, Optional
 from enum import Enum
 import datetime
 from collections import Counter
@@ -58,14 +58,29 @@ class StatisticsType(str, Enum):
 @dataclass
 class StatisticsConfig:
     """Statistics Configurations.
-    flatten_sequence: for sequence features,
-        statistics will be computed on the 
-        flattened version of the sequence by default.
+    handle_sequence: for sequence features,
+        there are two ways to handle the data.
+        "expand": (default) in this case, the sequence will 
+            be expanded so that it will contribute to
+            multiple instances of the data point.
+        "reduce": first reduce within the sequence 
+            and then reduce across the dataset. 
+            In this case, each sequence is treated as 
+            1 single data point, and will contribute
+            to a single counter in the population
+            statistics. Note that "reduce" is not valid
+            for varianec, standard_deviation and 
+            approximate_* metrics. Only "expand" will
+            be used.
+        
+        For certain statistics like `unique` or `frequency`
+        on categorical features, or `minimum`, `maximum`,
+        `min_max_range`, the two ways will yield the same result.
+        
     """
     feature: str
     type: StatisticsType
-    flatten_sequence: bool = True
-
+    handle_sequence: Literal["expand", "reduce"] = "expand"
 
 
 @dataclass
@@ -174,6 +189,7 @@ class StatisticsGenDoFn(beam.DoFn):
         
     @staticmethod
     def batch_compute_stats(stats_type: str, x_batched: Iterable):
+        # TODO: handle sequence features
         if stats_type == StatisticsType.unique:
             return set(x_batched)
         elif stats_type == StatisticsType.frequency:
