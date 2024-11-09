@@ -104,20 +104,25 @@ class TopKMetricPreprocessor(beam.DoFn):
 
         # Handle list type
         if isinstance(label, list):
-            if isinstance(label[0][0], int):
-                fillvalue = 0 if pad is None else pad
+            for _lab in label:
+                if _lab: # finding the first non-empty entry
+                    break
+            
+            if not _lab:
+                raise (TypeError("Unable to handle sparse label with all input empty"))
+            elif isinstance(_lab[0], int):
                 if pad is None:
-                    fillvalue = min([min(arr) for arr in label]) - 1
+                    fillvalue = min([min(arr) for arr in label if arr]) - 1
                 else:
                     fillvalue = pad
-            elif isinstance(label[0][0], float):
+            elif isinstance(_lab[0], float):
                 fillvalue = 0.0 if pad is None else pad
-            elif isinstance(label[0][0], str):
+            elif isinstance(_lab[0], str):
                 fillvalue = "" if pad is None else pad
             else:
                 raise (
                     TypeError(
-                        f"Unable to handle sparse label with dtype {type(label[0][0])}"
+                        f"Unable to handle sparse label with dtype {type(_lab)}"
                     )
                 )
             label = np.array(
