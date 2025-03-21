@@ -591,7 +591,7 @@ class PopulationTopKMetricCombiner(beam.CombineFn):
         accumulate_vocabulary: bool = False,
     ):
         """
-        Population levle top-k metric combiner class.
+        Population level top-k metric combiner class.
 
         Args:
             metric_key (str): Name of the metric
